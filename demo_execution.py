@@ -226,10 +226,19 @@ class DemoExecutor:
         if any(r['strategy']==signal['strategy'] and r['symbol']==signal['symbol'] and r['status'] in BUSY for r in all_rows):
             self.reserve(signal,'SKIPPED_BUSY',dict(base,note='This strategy/symbol already has an active or uncertain demo attempt'))
             return
+        _controls=None
         try:
             from trade_controls import controls
-            self.max_positions=controls(self.store,self.cfg)['max_positions']  # dashboard setting, read per entry
+            _controls=controls(self.store,self.cfg)
+            self.max_positions=_controls['max_positions']  # dashboard setting, read per entry
         except Exception:pass  # keep the last valid cap
+        if _controls is not None:
+            from trade_controls import in_trade_window,server_minute
+            windows=_controls.get('trade_windows') or {}
+            if not in_trade_window(windows,signal['strategy'],server_minute(now,self.cfg.get('tick_timestamp_offset_hours') or 0)):
+                win=windows.get(signal['strategy'],{})
+                self.reserve(signal,'SKIPPED_WINDOW',dict(base,note=f"Outside the {signal['strategy']} trade window ({win.get('start','?')}–{win.get('end','?')} MT5 server time). No new entry is opened; open positions keep running."))
+                return
         if getattr(self,'duplicate_block',False):
             self.reserve(signal,'BLOCKED',dict(base,note='Paused: another bot copy is trading this account (System Health). Acknowledge there to resume.'))
             return
@@ -413,7 +422,8 @@ class DemoExecutor:
                     opening=[d for d in history if int(d.entry)==0 and getattr(d,'volume',0)>0 and getattr(d,'price',0)>0]
                     if opening:
                         filled=sum(float(d.volume) for d in opening)
-                        p.update(actual_entry=sum(float(d.price)*float(d.volume) for d in opening)/filled,initial_filled_volume=filled)
+                        p.update(actual_entry=sum(float(d.price)*float(d.volume) for d in opening)/filled,initial_filled_volume=filled,
+                                 entry_epoch=min(getattr(d,'time',0) for d in opening))
                     total=sum(float(d.profit)+float(d.commission)+float(d.swap)+float(getattr(d,'fee',0)) for d in history)
                     last_exit=max(exits,key=lambda d:getattr(d,'time_msc',getattr(d,'time',0)))
                     p.update(exit_price=getattr(last_exit,'price',None),exit_epoch=getattr(last_exit,'time',None),realised=total,currency=a.currency,profit=None,decision='BROKER_CLOSED',last_broker_epoch=time.time(),

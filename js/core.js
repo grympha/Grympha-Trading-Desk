@@ -10,6 +10,9 @@ let data=null,selected='',paused=false,apiOnline=false,serverDelta=0,fetching=fa
 const now=()=>Date.now()/1000+serverDelta;
 const fmt=(p,d=3)=>p!==null&&p!==undefined&&p!==''&&Number.isFinite(Number(p))?Number(p).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}):'—';
 const date=(s,full=false)=>{let d=new Date(typeof s==='number'?s*1000:s);return Number.isFinite(+d)?d.toLocaleString(undefined,full?{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}:{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';};
+// MT5 server (broker) wall clock. Broker deal epochs are stored as server time, so reading them
+// in UTC reproduces the broker clock. full=true adds the date; otherwise just HH:MM:SS.
+const serverTime=(s,full=false)=>{if(s==null||s==='')return '—';const d=new Date(typeof s==='number'?s*1000:s);if(!Number.isFinite(+d))return '—';const z=n=>String(n).padStart(2,'0'),t=`${z(d.getUTCHours())}:${z(d.getUTCMinutes())}:${z(d.getUTCSeconds())}`;return full?`${z(d.getUTCMonth()+1)}-${z(d.getUTCDate())} ${t}`:t;};
 const ageText=s=>s<0?'Clock difference':s<60?`${Math.floor(s)}s ago`:s<3600?`${Math.floor(s/60)}m ago`:`${Math.floor(s/3600)}h ago`;
 const chip=(s,cls='')=>`<span class="chip ${cls}">${esc(s)}</span>`;
 // v1.20: rewrite an element only when its markup actually changed (keeps hover/scroll/focus and saves layout work)

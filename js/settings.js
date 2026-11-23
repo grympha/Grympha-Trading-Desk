@@ -10,6 +10,8 @@ function controlChanges(cur,next){
  for(const k of controlKeys){if(!(k in cur))continue;const a=cur[k],b=next[k];if(typeof b==='boolean'?!!a!==b:Number(a)!==Number(b))out.push(`• ${names[k]||k}: ${show(a)} → ${show(b)}`);}
  const ol=cur.pair_lots||{},nl=next.pair_lots||{};
  for(const sym of [...new Set([...Object.keys(ol),...Object.keys(nl)])].sort())if(Number(ol[sym])!==Number(nl[sym])&&!(ol[sym]==null&&nl[sym]==null))out.push(`• ${sym} fixed lot: ${ol[sym]??'auto'} → ${nl[sym]??'auto'}`);
+ const ow=cur.trade_windows||{},nw=next.trade_windows||{};
+ for(const s of ['BBMA','CONFLUENCE','ORB']){const a=ow[s]||{},b=nw[s]||{},as=a.enabled?`${a.start}–${a.end}`:'OFF',bs=b.enabled?`${b.start}–${b.end}`:'OFF';if(as!==bs)out.push(`• ${s} trade window (MT5 server): ${as} → ${bs}`);}
  return out;
 }
 document.querySelector('.settings-nav')?.addEventListener('click',e=>{const b=e.target.closest('[data-jump]');if(b)$(b.dataset.jump)?.scrollIntoView({block:'start'});});
@@ -69,6 +71,17 @@ function renderControls(s){
  const lots=c.pair_lots||{},strategies=data?.meta?.strategies||{};
  const symbols=[...new Set([...Object.values(strategies).flatMap(x=>x.symbols||[]),...(data?.meta?.symbols||[]),...Object.keys(lots)])];
  $('pair-lots').innerHTML=symbols.map(sym=>`<label>${esc(sym)}<input data-pair-lot="${esc(sym)}" aria-label="${esc(sym)} fixed lot for both strategies" type="number" min="0.00000001" max="100" step="any" placeholder="Use global settings" value="${lots[sym]??''}"></label>`).join('');
+ renderTradeWindows(c);
+}
+const WINDOW_STRATEGIES=['BBMA','CONFLUENCE','ORB'];
+function renderTradeWindows(c){
+ const target=$('trade-windows');if(!target)return;
+ const w=c.trade_windows||{};
+ target.innerHTML=WINDOW_STRATEGIES.map(s=>{const x=w[s]||{enabled:false,start:'00:00',end:'00:00'};
+  return `<div class="trade-window-row"><label class="tw-strategy"><input type="checkbox" data-tw-enabled="${s}" ${x.enabled?'checked':''} ${demo?'disabled':''}> <b>${s}</b></label><label>From<input type="time" data-tw-start="${s}" value="${esc(x.start||'00:00')}" ${demo?'disabled':''}></label><label>To<input type="time" data-tw-end="${s}" value="${esc(x.end||'00:00')}" ${demo?'disabled':''}></label></div>`;}).join('');
+}
+function readTradeWindows(){
+ return Object.fromEntries(WINDOW_STRATEGIES.map(s=>[s,{enabled:document.querySelector(`[data-tw-enabled="${s}"]`)?.checked||false,start:document.querySelector(`[data-tw-start="${s}"]`)?.value||'00:00',end:document.querySelector(`[data-tw-end="${s}"]`)?.value||'00:00'}]));
 }
 function renderNews(s){
  const n=s.meta.news_filter,health=$('news-health'),body=$('news-events');
@@ -89,7 +102,7 @@ function renderNews(s){
  body.innerHTML=events.map(e=>`<p class="small"><b>${e.estimated_time?'Time TBC':clock(e.epoch)+' '+zone}</b> · ${esc(e.currency)} · ${esc(e.title)}</p>`).join('');
 }
 $('controls-form').oninput=()=>{controlsDirty=true;};
-$('controls-form').onsubmit=async e=>{e.preventDefault();if(demo){$('controls-message').textContent='Sample view: settings are not sent or saved.';return;}const body={};for(const k of controlKeys)body[k]=$(k).type==='checkbox'?$(k).checked:Number($(k).value);body.pair_lots=Object.fromEntries([...document.querySelectorAll('[data-pair-lot]')].filter(el=>el.value.trim()!=='').map(el=>[el.dataset.pairLot,Number(el.value)]));const changes=controlChanges(data?.meta?.trade_controls||{},body);if(changes.length&&!confirm('Save these trading changes?\n\n'+changes.join('\n')+'\n\nApplies to NEW entries (management also to open bot positions).'+(document.body.classList.contains('real-account')?'\n\n⚠ This is a REAL account.':''))){$('controls-message').textContent='Not saved. No changes were sent.';return;}try{const r=await fetch('api/controls',{method:'POST',headers:{'Content-Type':'application/json','X-Dashboard-Request':'controls'},body:JSON.stringify(body)});if(!r.ok)throw Error('HTTP '+r.status+(r.status===501?' · Backend outdated. Install complete v1.9 package.':r.status===403?' · Open dashboard using http://127.0.0.1:8765.':''));controlsDirty=false;$('controls-message').textContent='Saved. Management applies next broker loop; pair lots and risk sizing apply to new entries. Existing positions and pending orders unchanged.';await refresh();}catch(error){$('controls-message').textContent='Controls not saved. '+(error.message||'Check connection and numeric ranges.');}};
+$('controls-form').onsubmit=async e=>{e.preventDefault();if(demo){$('controls-message').textContent='Sample view: settings are not sent or saved.';return;}const body={};for(const k of controlKeys)body[k]=$(k).type==='checkbox'?$(k).checked:Number($(k).value);body.pair_lots=Object.fromEntries([...document.querySelectorAll('[data-pair-lot]')].filter(el=>el.value.trim()!=='').map(el=>[el.dataset.pairLot,Number(el.value)]));body.trade_windows=readTradeWindows();const changes=controlChanges(data?.meta?.trade_controls||{},body);if(changes.length&&!confirm('Save these trading changes?\n\n'+changes.join('\n')+'\n\nApplies to NEW entries (management also to open bot positions).'+(document.body.classList.contains('real-account')?'\n\n⚠ This is a REAL account.':''))){$('controls-message').textContent='Not saved. No changes were sent.';return;}try{const r=await fetch('api/controls',{method:'POST',headers:{'Content-Type':'application/json','X-Dashboard-Request':'controls'},body:JSON.stringify(body)});if(!r.ok)throw Error('HTTP '+r.status+(r.status===501?' · Backend outdated. Install complete v1.9 package.':r.status===403?' · Open dashboard using http://127.0.0.1:8765.':''));controlsDirty=false;$('controls-message').textContent='Saved. Management applies next broker loop; pair lots and risk sizing apply to new entries. Existing positions and pending orders unchanged.';await refresh();}catch(error){$('controls-message').textContent='Controls not saved. '+(error.message||'Check connection and numeric ranges.');}};
 
 // ---- v1.23 Strategy setups (BBMA setups on/off, Confluence minimum score) ----
 let strategyDirty=false;

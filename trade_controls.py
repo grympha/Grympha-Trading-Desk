@@ -1,12 +1,51 @@
 """Validated controls and broker-currency risk calculations."""
+import datetime
 import math
 import re
 from decimal import Decimal, ROUND_FLOOR
-DEFAULTS=dict(pair_lots={},risk_enabled=True,risk_percent=.5,partial_enabled=False,partial_percent=50.,breakeven_enabled=False,breakeven_offset_points=0.,trailing_enabled=False,trailing_start_r=1.,trailing_distance_r=1.,max_positions=6)
+DEFAULTS=dict(pair_lots={},risk_enabled=True,risk_percent=.5,partial_enabled=False,partial_percent=50.,breakeven_enabled=False,breakeven_offset_points=0.,trailing_enabled=False,trailing_start_r=1.,trailing_distance_r=1.,max_positions=6,trade_windows={})
+
+# Per-strategy trade-time windows are expressed in MT5 server time (the broker wall clock),
+# to match how the dashboard report shows timestamps. A window only gates NEW entries.
+WINDOW_STRATEGIES={'BBMA','CONFLUENCE','ORB'}
+
+def _hhmm(value):
+    m=re.fullmatch(r'([01]\d|2[0-3]):([0-5]\d)',str(value))
+    if not m:raise ValueError('Trade-window time must be HH:MM (24h)')
+    return int(m.group(1))*60+int(m.group(2))
+
+def _fmt_min(total):
+    return f'{total//60:02d}:{total%60:02d}'
+
+def validate_windows(windows):
+    if not isinstance(windows,dict) or len(windows)>len(WINDOW_STRATEGIES):raise ValueError('Invalid trade windows')
+    clean={}
+    for strategy,win in windows.items():
+        if strategy not in WINDOW_STRATEGIES:raise ValueError('Unknown strategy for trade window: '+str(strategy))
+        if not isinstance(win,dict) or set(win)-{'enabled','start','end'}:raise ValueError('Invalid trade window')
+        start,end=_hhmm(win.get('start','00:00')),_hhmm(win.get('end','00:00'))
+        clean[strategy]={'enabled':bool(win.get('enabled',False)),'start':_fmt_min(start),'end':_fmt_min(end)}
+    return clean
+
+def in_trade_window(windows,strategy,minute_of_day):
+    """True when the strategy may open a NEW entry at this MT5-server minute-of-day.
+    No window, a disabled window, or start==end (treated as all day) never blocks."""
+    win=(windows or {}).get(strategy)
+    if not win or not win.get('enabled'):return True
+    start,end=_hhmm(win['start']),_hhmm(win['end'])
+    if start==end:return True
+    if start<end:return start<=minute_of_day<end
+    return minute_of_day>=start or minute_of_day<end  # window wraps past midnight
+
+def server_minute(utc_epoch,offset_hours):
+    """Minute-of-day on the broker wall clock for a UTC epoch (offset_hours = broker ahead of UTC)."""
+    server=datetime.datetime.utcfromtimestamp(utc_epoch+float(offset_hours)*3600)
+    return server.hour*60+server.minute
 
 def validate(values):
     if not isinstance(values,dict) or set(values)-set(DEFAULTS):raise ValueError('Unknown trade control')
     d={**DEFAULTS,**values}
+    d['trade_windows']=validate_windows(d.get('trade_windows') or {})
     for k in ('risk_enabled','partial_enabled','breakeven_enabled','trailing_enabled'):
         if not isinstance(d[k],bool):raise ValueError(k+' must be boolean')
     for k,lo,hi in [('risk_percent',.01,2),('partial_percent',1,99),('breakeven_offset_points',0,1000),('trailing_start_r',.1,10),('trailing_distance_r',.1,10)]:

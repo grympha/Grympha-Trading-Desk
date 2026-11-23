@@ -66,8 +66,9 @@ def analyse(row,p,samples):
     if outcome=='LOSS' and unit_r and mfe is not None and tp1_r is not None and mfe/unit_r>=tp1_r:tags.append('SAMPLED_TP1_THEN_NET_LOSS')
     if slippage is not None and unit_r and slippage/unit_r>=.1:tags.append('ADVERSE_FILL_GE_0_1R')
     if any(v is False for v in audit.values()):tags.append('LIMITED_AUDIT_REVIEW')
-    return dict(key=row['key'],strategy=row['strategy'],symbol=row['symbol'],setup=context.get('setup') or before.get('setup') or 'UNKNOWN',
+    rec=dict(key=row['key'],strategy=row['strategy'],symbol=row['symbol'],setup=context.get('setup') or before.get('setup') or 'UNKNOWN',
         side=p.get('side'),created=row['created'],closed_epoch=p.get('exit_epoch') or row['updated'],
+        entry_epoch=p.get('entry_epoch'),exit_epoch=p.get('exit_epoch'),
         position_ticket=p.get('position_ticket'),outcome=outcome,realised=realised if number(realised) else None,currency=currency,
         entry=entry,reference=reference,sl=sl,tp1=p.get('tp1'),tp2=p.get('tp2'),final_sl=p.get('actual_sl'),final_tp=p.get('actual_tp'),exit_price=p.get('exit_price'),
         exit_reason=REASONS.get(p.get('close_reason'),'Broker reason '+str(p.get('close_reason'))),
@@ -78,6 +79,8 @@ def analyse(row,p,samples):
         utc_hour=before.get('utc_hour'),tags=tags,limited_audit=audit,data_quality=flags,before=before,
         protection_samples=observations.get('protection_samples',[]),management=p.get('management') or {},tp1_observed=bool(p.get('tp1_observed')),
         review_status='UNDER REVIEW' if tags else 'COLLECTING DATA')
+    rec['be']=is_breakeven(rec)
+    return rec
 
 class TradeReviewer:
     def __init__(self,store,cfg,mt5=None):
