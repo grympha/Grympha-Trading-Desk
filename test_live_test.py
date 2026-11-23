@@ -250,7 +250,8 @@ class Simulation(unittest.TestCase):
     def test_candle_end_close(self):
         now, hour = in_session_now()
         _, md = self._market(now)
-        agent = PrevCandleBreakoutH1({'session_open_hour': hour, 'tp_points': 600})
+        agent = PrevCandleBreakoutH1({'session_open_hour': hour, 'tp_points': 600,
+                                      'sl_buffer_points': 50, 'max_sl_points': 800})
         la = N(id='x', agent=agent, symbol='XAUUSD')
         q = __import__('market_data').Quote('XAUUSD', 2000.5, 2000.7, now, 0.0, POINT, DIGITS)
         sig = agent.evaluate(now, q, [Bar(now - 3600, 1999, 2000.0, 1998.0, 1999)], POINT, {'ref_price': 1999.0})
@@ -408,7 +409,8 @@ class CmsFlip(unittest.TestCase):
         self.assertEqual(lows[-1][1], 1990)
 
     def test_sbr_sell_flip_on_retest_up(self):
-        agent = CmsSupportResistanceFlip()
+        agent = CmsSupportResistanceFlip({'break_buffer_points': 80, 'sl_buffer_points': 60,
+                                          'min_sl_points': 80, 'max_sl_points': 1500})
         bars = cms_bars(self.NOW, [1995, 1994, 1993, 1992, 1991, 1990, 1992, 1993, 1991, 1988],
                         [1998, 1997, 1996, 1995, 1994, 1993, 1995, 1996, 1994, 1990],
                         [1996, 1995, 1994, 1993, 1992, 1991, 1993, 1994, 1992, 1988.5])
@@ -469,7 +471,8 @@ class CmsFakeout(unittest.TestCase):
         return Quote('XAUUSD', bid, ask, self.NOW, 0.0, POINT, DIGITS)
 
     def test_sell_fakeout_pierces_and_closes_back(self):
-        agent = CmsFakeoutV1()
+        agent = CmsFakeoutV1({'pierce_buffer_points': 50, 'sl_buffer_points': 60,
+                              'min_sl_points': 80, 'max_sl_points': 1500})
         bars = cms_bars(self.NOW,
                         [1993, 1994, 1995, 1996, 1997, 1998, 1996, 1995, 1997, 2000],
                         [1998, 1999, 2000, 2001, 2002, 2003, 2001, 2000, 2002, 2005],
@@ -510,7 +513,8 @@ class CmsSupplyDemandTests(unittest.TestCase):
         return b
 
     def test_demand_zone_buy_on_return(self):
-        agent = CmsSupplyDemand()
+        agent = CmsSupplyDemand({'impulse_body_points': 150, 'base_range_points': 120,
+                                 'sl_buffer_points': 60, 'min_sl_points': 80, 'max_sl_points': 2000})
         bars = self._bars()
         state = {}
         self.assertIsNone(agent.evaluate(self.NOW, self.q(2003.0, 2003.2), bars, POINT, state))   # above zone, baseline
@@ -529,7 +533,8 @@ class CmsSsrTests(unittest.TestCase):
         return Quote('XAUUSD', bid, ask, self.NOW, 0.0, POINT, DIGITS)
 
     def test_significant_resistance_fades_short(self):
-        agent = CmsSsr()
+        agent = CmsSsr({'cluster_points': 120, 'sl_buffer_points': 80,
+                        'min_sl_points': 80, 'max_sl_points': 1200})
         highs = [2005, 2008, 2007, 2010, 2007, 2008, 2007, 2010.5, 2007, 2008]
         bars = cms_bars(self.NOW, [h - 10 for h in highs], highs, [h - 2 for h in highs])
         state = {}
@@ -564,6 +569,38 @@ class CmsRegistration(unittest.TestCase):
             core = {la.agent.strategy_id for la in eng.agents.values()
                     if la.base_symbol == base and la.agent.strategy_id != 'ORB_BREAKOUT_RETEST'}
             self.assertEqual(len(core), 6)
+
+
+class AtrSizing(unittest.TestCase):
+    NOW = 1_700_007_200.0
+
+    def test_atr_true_range(self):
+        from live_test import atr
+        bars = [Bar(0, 10, 12, 8, 11), Bar(3600, 11, 15, 10, 14), Bar(7200, 14, 16, 13, 15)]
+        # TR1 = max(15-10, |15-11|, |10-11|) = 5 ; TR2 = max(16-13, |16-14|, |13-14|) = 3 ; ATR = 4
+        self.assertAlmostEqual(atr(bars, 14), 4.0)
+        self.assertIsNone(atr([Bar(0, 1, 1, 1, 1)]))   # < 2 bars
+
+    def test_dist_points_override_else_atr(self):
+        from live_test import dist
+        self.assertAlmostEqual(dist(50, 0.1, 4.0, 0.01), 0.5)    # explicit points win (50 * 0.01)
+        self.assertAlmostEqual(dist(None, 0.1, 4.0, 0.01), 0.4)  # else ATR-based (0.1 * 4.0)
+        self.assertIsNone(dist(None, 0.1, None, 0.01))           # neither available
+
+    def test_fakeout_sl_buffer_is_atr_based_by_default(self):
+        from live_test import atr
+        agent = CmsFakeoutV1()   # ATR defaults, no point overrides
+        bars = cms_bars(self.NOW,
+                        [1993, 1994, 1995, 1996, 1997, 1998, 1996, 1995, 1997, 2000],
+                        [1998, 1999, 2000, 2001, 2002, 2003, 2001, 2000, 2002, 2005],
+                        [1996, 1997, 1998, 1999, 2000, 2001, 1999, 1998, 2000, 2001])
+        q = Quote('XAUUSD', 2001.0, 2001.2, self.NOW, 0.0, POINT, DIGITS)
+        sig = agent.evaluate(self.NOW, q, bars, POINT, {})
+        self.assertIsNotNone(sig)
+        a = atr(bars, 14)
+        self.assertGreater(a, 0)
+        # SL sits sl_buffer_atr (0.15) * ATR above the fakeout high (2005) -> scales per instrument
+        self.assertAlmostEqual(sig['initial_sl'] - 2005.0, 0.15 * a, places=2)
 
 
 if __name__ == '__main__':

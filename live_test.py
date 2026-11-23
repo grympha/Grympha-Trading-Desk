@@ -81,6 +81,29 @@ def candle_at_hour(candles, hour, tz_name, now, by='close'):
     return None
 
 
+def atr(candles, period=14):
+    """Average True Range (in price) over the last `period` closed bars. None if < 2 bars.
+    Lets each agent size SL/TP to an instrument's own volatility instead of fixed points."""
+    if not candles or len(candles) < 2:
+        return None
+    trs = []
+    for i in range(1, len(candles)):
+        h, l, pc = candles[i].high, candles[i].low, candles[i - 1].close
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    window = trs[-period:]
+    return (sum(window) / len(window)) if window else None
+
+
+def dist(points_param, atr_mult, atr_value, point):
+    """Resolve a distance in price. An explicit *_points value (not None) wins and pins a fixed
+    distance; otherwise it is atr_mult * ATR (per-instrument). None when neither is available."""
+    if points_param is not None:
+        return points_param * point
+    if atr_mult is not None and atr_value is not None:
+        return atr_mult * atr_value
+    return None
+
+
 # --------------------------------------------------------------------------- agents
 class PrevCandleBreakoutH1:
     """Previous (closed) H1 candle breakout. BUY when the reference price crosses the
@@ -91,7 +114,8 @@ class PrevCandleBreakoutH1:
     timeframe = 'H1'
     DEFAULTS = dict(
         session_open_hour=9, session_tz='Asia/Kuala_Lumpur', session_hours=1,
-        sl_buffer_points=50, max_sl_points=800, tp_points=600,
+        atr_period=14, sl_buffer_atr=0.1, tp_atr=1.5, max_sl_atr=3.0,
+        sl_buffer_points=None, tp_points=None, max_sl_points=None,
         max_gap_seconds=120, max_positions=1)
 
     def __init__(self, config: dict | None = None):
@@ -129,16 +153,20 @@ class PrevCandleBreakoutH1:
         if not side:
             return None
         entry = quote.ask if side == 'BUY' else quote.bid
-        buf = c['sl_buffer_points'] * point
+        a = atr(candles, c['atr_period'])
+        buf = dist(c['sl_buffer_points'], c['sl_buffer_atr'], a, point)
+        tp_d = dist(c['tp_points'], c['tp_atr'], a, point)
+        max_sl = dist(c['max_sl_points'], c['max_sl_atr'], a, point)
+        if buf is None or tp_d is None or max_sl is None:
+            return None
         if side == 'BUY':
             sl = prev.low - buf
-            tp = entry + c['tp_points'] * point
+            tp = entry + tp_d
         else:
             sl = prev.high + buf
-            tp = entry - c['tp_points'] * point
-        # Validate SL/TP direction and distance (points). Config values are not copied from a PDF pip example.
+            tp = entry - tp_d
+        # Validate SL/TP direction and distance. Distances are ATR-based per instrument by default.
         risk = abs(entry - sl)
-        max_sl = c['max_sl_points'] * point
         if risk <= 0 or risk > max_sl:
             return None
         if side == 'BUY' and not (sl < entry < tp):
@@ -169,7 +197,8 @@ class CounterTrendScalper:
     DEFAULTS = dict(
         mode='watermark', ref_hour=15, mid_hour=17, ref_tz='America/New_York',
         session_start_hour=15, session_end_hour=19,
-        tolerance_points=50, target_points=300,
+        atr_period=14, tolerance_atr=0.15, target_atr=0.8,
+        tolerance_points=None, target_points=None,
         max_gap_seconds=120, max_positions=1)
 
     def __init__(self, config=None):
@@ -191,8 +220,11 @@ class CounterTrendScalper:
         state['session'] = f"{day}@offhours"
         if not candles or prev is None:
             return None
-        tol = c['tolerance_points'] * point
-        tgt = c['target_points'] * point
+        a = atr(candles, c['atr_period'])
+        tol = dist(c['tolerance_points'], c['tolerance_atr'], a, point)
+        tgt = dist(c['target_points'], c['target_atr'], a, point)
+        if tol is None or tgt is None:
+            return None
         side = reason = None
         if c['mode'] == 'midpoint':
             bar = candle_at_hour(candles, c['mid_hour'], c['ref_tz'], now, by='open')
@@ -265,8 +297,9 @@ class CmsSupportResistanceFlip:
     version = 'cms_sr_flip@1'
     timeframe = 'H1'
     DEFAULTS = dict(
-        swing_left=2, swing_right=2, break_buffer_points=80, sl_buffer_points=60,
-        protect_lookback=6, reward_rr=2.0, min_sl_points=80, max_sl_points=1500,
+        swing_left=2, swing_right=2, atr_period=14, break_buffer_atr=0.25, sl_buffer_atr=0.15,
+        min_sl_atr=0.3, max_sl_atr=4.0, break_buffer_points=None, sl_buffer_points=None,
+        min_sl_points=None, max_sl_points=None, protect_lookback=6, reward_rr=2.0,
         flip_ttl_hours=12, session_enabled=False, session_start_hour=0, session_end_hour=24,
         session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
 
@@ -286,9 +319,12 @@ class CmsSupportResistanceFlip:
             return None
         if not candles or len(candles) < c['swing_left'] + c['swing_right'] + 2:
             return None
+        a = atr(candles, c['atr_period'])
+        bbuf = dist(c['break_buffer_points'], c['break_buffer_atr'], a, point)
+        if bbuf is None:
+            return None
         highs, lows = swing_points(candles, c['swing_left'], c['swing_right'])
         last = candles[-1]
-        bbuf = c['break_buffer_points'] * point
         flip = state.get('flip')
         fired = state.get('fired_break')
         # Detect a flip from the latest CLOSED candle breaking a prior pivot (SBR / RBS).
@@ -313,7 +349,11 @@ class CmsSupportResistanceFlip:
         if not side:
             return None
         look = candles[-c['protect_lookback']:] if c['protect_lookback'] > 0 else candles[-1:]
-        buf = c['sl_buffer_points'] * point
+        buf = dist(c['sl_buffer_points'], c['sl_buffer_atr'], a, point)
+        min_sl = dist(c['min_sl_points'], c['min_sl_atr'], a, point)
+        max_sl = dist(c['max_sl_points'], c['max_sl_atr'], a, point)
+        if buf is None or min_sl is None or max_sl is None:
+            return None
         entry = quote.ask if side == 'BUY' else quote.bid
         if side == 'SELL':
             protect = max([b.high for b in look] + [level])
@@ -325,7 +365,6 @@ class CmsSupportResistanceFlip:
             sl = protect - buf
             risk = entry - sl
             tp = entry + c['reward_rr'] * risk
-        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
         if not (min_sl <= risk <= max_sl):
             return None
         if side == 'BUY' and not (sl < entry < tp):
@@ -353,8 +392,9 @@ class CmsFakeoutV1:
     version = 'cms_fakeout_v1@1'
     timeframe = 'H1'
     DEFAULTS = dict(
-        swing_left=2, swing_right=2, pierce_buffer_points=50, sl_buffer_points=60,
-        reward_rr=2.0, min_sl_points=80, max_sl_points=1500,
+        swing_left=2, swing_right=2, atr_period=14, pierce_buffer_atr=0.15, sl_buffer_atr=0.15,
+        min_sl_atr=0.3, max_sl_atr=4.0, pierce_buffer_points=None, sl_buffer_points=None,
+        min_sl_points=None, max_sl_points=None, reward_rr=2.0,
         session_enabled=False, session_start_hour=0, session_end_hour=24,
         session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
 
@@ -375,7 +415,10 @@ class CmsFakeoutV1:
         last = candles[-1]
         if state.get('fired') == last.time:
             return None
-        pbuf = c['pierce_buffer_points'] * point
+        a = atr(candles, c['atr_period'])
+        pbuf = dist(c['pierce_buffer_points'], c['pierce_buffer_atr'], a, point)
+        if pbuf is None:
+            return None
         side = level = None
         if highs and last.high > highs[-1][1] + pbuf and last.close < highs[-1][1] and last.time > highs[-1][2]:
             side, level = 'SELL', highs[-1][1]
@@ -383,7 +426,11 @@ class CmsFakeoutV1:
             side, level = 'BUY', lows[-1][1]
         if not side:
             return None
-        buf = c['sl_buffer_points'] * point
+        buf = dist(c['sl_buffer_points'], c['sl_buffer_atr'], a, point)
+        min_sl = dist(c['min_sl_points'], c['min_sl_atr'], a, point)
+        max_sl = dist(c['max_sl_points'], c['max_sl_atr'], a, point)
+        if buf is None or min_sl is None or max_sl is None:
+            return None
         entry = quote.ask if side == 'BUY' else quote.bid
         if side == 'SELL':
             sl = last.high + buf
@@ -393,7 +440,6 @@ class CmsFakeoutV1:
             sl = last.low - buf
             risk = entry - sl
             tp = entry + c['reward_rr'] * risk
-        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
         if not (min_sl <= risk <= max_sl):
             return None
         if side == 'BUY' and not (sl < entry < tp):
@@ -419,8 +465,10 @@ class CmsSupplyDemand:
     version = 'cms_supply_demand@1'
     timeframe = 'H1'
     DEFAULTS = dict(
-        impulse_body_points=150, base_max=3, base_range_points=120, scan=20,
-        sl_buffer_points=60, reward_rr=2.0, min_sl_points=80, max_sl_points=2000,
+        atr_period=14, impulse_body_atr=1.0, base_range_atr=0.6, sl_buffer_atr=0.15,
+        min_sl_atr=0.3, max_sl_atr=5.0, impulse_body_points=None, base_range_points=None,
+        sl_buffer_points=None, min_sl_points=None, max_sl_points=None,
+        base_max=3, scan=20, reward_rr=2.0,
         zone_ttl_hours=24, session_enabled=False, session_start_hour=0, session_end_hour=24,
         session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
 
@@ -440,8 +488,11 @@ class CmsSupplyDemand:
             return None
         if not candles or len(candles) < 3:
             return None
-        imp_body = c['impulse_body_points'] * point
-        base_rng = c['base_range_points'] * point
+        a = atr(candles, c['atr_period'])
+        imp_body = dist(c['impulse_body_points'], c['impulse_body_atr'], a, point)
+        base_rng = dist(c['base_range_points'], c['base_range_atr'], a, point)
+        if imp_body is None or base_rng is None:
+            return None
         n = len(candles)
         zone = state.get('zone')
         fired = state.get('fired_zone')
@@ -477,7 +528,11 @@ class CmsSupplyDemand:
             side = 'SELL'
         if not side:
             return None
-        buf = c['sl_buffer_points'] * point
+        buf = dist(c['sl_buffer_points'], c['sl_buffer_atr'], a, point)
+        min_sl = dist(c['min_sl_points'], c['min_sl_atr'], a, point)
+        max_sl = dist(c['max_sl_points'], c['max_sl_atr'], a, point)
+        if buf is None or min_sl is None or max_sl is None:
+            return None
         entry = quote.ask if side == 'BUY' else quote.bid
         if side == 'BUY':
             sl = zone['low'] - buf
@@ -487,7 +542,6 @@ class CmsSupplyDemand:
             sl = zone['high'] + buf
             risk = sl - entry
             tp = entry - c['reward_rr'] * risk
-        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
         if not (min_sl <= risk <= max_sl):
             return None
         if side == 'BUY' and not (sl < entry < tp):
@@ -516,10 +570,11 @@ class CmsSsr:
     version = 'cms_ssr@1'
     timeframe = 'H1'
     DEFAULTS = dict(
-        swing_left=2, swing_right=2, min_touches=2, cluster_points=120, sl_buffer_points=80,
-        reward_rr=2.0, min_sl_points=80, max_sl_points=1200, session_enabled=False,
-        session_start_hour=0, session_end_hour=24, session_tz='America/New_York',
-        max_gap_seconds=120, max_positions=1)
+        swing_left=2, swing_right=2, min_touches=2, atr_period=14, cluster_atr=0.4,
+        sl_buffer_atr=0.2, min_sl_atr=0.3, max_sl_atr=3.0, cluster_points=None,
+        sl_buffer_points=None, min_sl_points=None, max_sl_points=None, reward_rr=2.0,
+        session_enabled=False, session_start_hour=0, session_end_hour=24,
+        session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
 
     def __init__(self, config=None):
         self.config = {**self.DEFAULTS, **(config or {})}
@@ -546,8 +601,11 @@ class CmsSsr:
             return None
         if not candles or len(candles) < c['swing_left'] + c['swing_right'] + 2:
             return None
+        a = atr(candles, c['atr_period'])
+        tol = dist(c['cluster_points'], c['cluster_atr'], a, point)
+        if tol is None:
+            return None
         highs, lows = swing_points(candles, c['swing_left'], c['swing_right'])
-        tol = c['cluster_points'] * point
         res = self._significant([h[1] for h in highs], tol, c['min_touches'])
         sup = self._significant([l[1] for l in lows], tol, c['min_touches'])
         if prev is None:
@@ -562,7 +620,11 @@ class CmsSsr:
         key = f'{side}:{round(level, quote.digits)}'
         if state.get('fired') == key:
             return None
-        buf = c['sl_buffer_points'] * point
+        buf = dist(c['sl_buffer_points'], c['sl_buffer_atr'], a, point)
+        min_sl = dist(c['min_sl_points'], c['min_sl_atr'], a, point)
+        max_sl = dist(c['max_sl_points'], c['max_sl_atr'], a, point)
+        if buf is None or min_sl is None or max_sl is None:
+            return None
         entry = quote.ask if side == 'BUY' else quote.bid
         if side == 'SELL':
             sl = level + buf
@@ -572,7 +634,6 @@ class CmsSsr:
             sl = level - buf
             risk = entry - sl
             tp = entry + c['reward_rr'] * risk
-        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
         if not (min_sl <= risk <= max_sl):
             return None
         if side == 'BUY' and not (sl < entry < tp):
