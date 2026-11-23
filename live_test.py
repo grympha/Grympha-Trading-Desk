@@ -235,6 +235,359 @@ class CounterTrendScalper:
                     config_snapshot=dict(self.config))
 
 
+def swing_points(candles, left, right):
+    """Confirmed pivot highs and lows as [(index, price, time), ...].
+    A pivot needs `left` bars before and `right` bars after it, and must be a strict
+    extreme versus at least one neighbour (so flat plateaus do not count)."""
+    highs, lows = [], []
+    n = len(candles)
+    for i in range(left, n - right):
+        c = candles[i]
+        window = range(i - left, i + right + 1)
+        if all(c.high >= candles[j].high for j in window) and any(c.high > candles[j].high for j in window if j != i):
+            highs.append((i, c.high, c.time))
+        if all(c.low <= candles[j].low for j in window) and any(c.low < candles[j].low for j in window if j != i):
+            lows.append((i, c.low, c.time))
+    return highs, lows
+
+
+class CmsSupportResistanceFlip:
+    """CMS (Mansor Sapari) continuation flip: SBR / RBS.
+    - SBR, Support Becomes Resistance: a CLOSE below a prior swing low flips that broken
+      support into resistance; SELL when price retests UP into the level.
+    - RBS, Resistance Becomes Support: a CLOSE above a prior swing high flips that broken
+      resistance into support; BUY when price retests DOWN into the level.
+    Swing levels are H1 pivots; the retest crossing is detected from observed ticks, so a
+    level already breached at start never enters. SL sits beyond the protective extreme of
+    the recent structure; TP is a fixed reward multiple of the measured risk. These SL/TP
+    and zone parameters are an initial, testable model and NOT a confirmed CMS rule set."""
+    strategy_id = 'CMS_SR_FLIP'
+    version = 'cms_sr_flip@1'
+    timeframe = 'H1'
+    DEFAULTS = dict(
+        swing_left=2, swing_right=2, break_buffer_points=80, sl_buffer_points=60,
+        protect_lookback=6, reward_rr=2.0, min_sl_points=80, max_sl_points=1500,
+        flip_ttl_hours=12, session_enabled=False, session_start_hour=0, session_end_hour=24,
+        session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
+
+    def __init__(self, config=None):
+        self.config = {**self.DEFAULTS, **(config or {})}
+        self.config_id = config_id(self.config)
+
+    def label(self):
+        return 'CMS Support/Resistance Flip (SBR/RBS)'
+
+    def evaluate(self, now, quote, candles, point, state):
+        c = self.config
+        ref = (quote.bid + quote.ask) / 2.0
+        prev = state.get('ref_price')
+        state['ref_price'] = ref
+        if c['session_enabled'] and not in_window(now, c['session_start_hour'], c['session_end_hour'], c['session_tz']):
+            return None
+        if not candles or len(candles) < c['swing_left'] + c['swing_right'] + 2:
+            return None
+        highs, lows = swing_points(candles, c['swing_left'], c['swing_right'])
+        last = candles[-1]
+        bbuf = c['break_buffer_points'] * point
+        flip = state.get('flip')
+        fired = state.get('fired_break')
+        # Detect a flip from the latest CLOSED candle breaking a prior pivot (SBR / RBS).
+        new_flip = None
+        if lows and last.close < lows[-1][1] - bbuf and last.time > lows[-1][2]:
+            new_flip = dict(side='SELL', level=lows[-1][1], break_time=last.time, created=now)
+        elif highs and last.close > highs[-1][1] + bbuf and last.time > highs[-1][2]:
+            new_flip = dict(side='BUY', level=highs[-1][1], break_time=last.time, created=now)
+        if new_flip and new_flip['break_time'] != fired and (not flip or flip['break_time'] != new_flip['break_time']):
+            flip = new_flip
+            state['flip'] = flip
+        if flip and (now - flip.get('created', now)) > c['flip_ttl_hours'] * 3600:
+            state['flip'] = flip = None
+        if not flip or prev is None:
+            return None
+        level = flip['level']
+        side = None
+        if flip['side'] == 'SELL' and prev < level <= ref:   # retest up into broken support (now resistance)
+            side = 'SELL'
+        elif flip['side'] == 'BUY' and prev > level >= ref:   # retest down into broken resistance (now support)
+            side = 'BUY'
+        if not side:
+            return None
+        look = candles[-c['protect_lookback']:] if c['protect_lookback'] > 0 else candles[-1:]
+        buf = c['sl_buffer_points'] * point
+        entry = quote.ask if side == 'BUY' else quote.bid
+        if side == 'SELL':
+            protect = max([b.high for b in look] + [level])
+            sl = protect + buf
+            risk = sl - entry
+            tp = entry - c['reward_rr'] * risk
+        else:
+            protect = min([b.low for b in look] + [level])
+            sl = protect - buf
+            risk = entry - sl
+            tp = entry + c['reward_rr'] * risk
+        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
+        if not (min_sl <= risk <= max_sl):
+            return None
+        if side == 'BUY' and not (sl < entry < tp):
+            return None
+        if side == 'SELL' and not (tp < entry < sl):
+            return None
+        state['fired_break'] = flip['break_time']
+        state['flip'] = None
+        session = datetime.fromtimestamp(now, MYT).strftime('%Y-%m-%d') + '@cms'
+        return dict(side=side, signal_reason=f"{'RBS' if side == 'BUY' else 'SBR'} retest of {round(level, quote.digits)}",
+                    signal_time=now, trigger_price=ref,
+                    initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
+                    session=session, timeframe=self.timeframe, entry_candle_end=None,
+                    config_snapshot=dict(self.config))
+
+
+class CmsFakeoutV1:
+    """CMS Fakeout V1: a swing level is pierced then reclaimed inside one H1 candle.
+    - SELL: the candle's high pokes above a prior swing high (resistance) but the candle
+      CLOSES back below it -> fade the failed breakout.
+    - BUY: the candle's low pokes below a prior swing low (support) but CLOSES back above it.
+    Enters at market right after the rejection candle closes. SL beyond the fakeout wick;
+    TP a fixed reward multiple of risk. Parameters are an initial, testable model."""
+    strategy_id = 'CMS_FAKEOUT_V1'
+    version = 'cms_fakeout_v1@1'
+    timeframe = 'H1'
+    DEFAULTS = dict(
+        swing_left=2, swing_right=2, pierce_buffer_points=50, sl_buffer_points=60,
+        reward_rr=2.0, min_sl_points=80, max_sl_points=1500,
+        session_enabled=False, session_start_hour=0, session_end_hour=24,
+        session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
+
+    def __init__(self, config=None):
+        self.config = {**self.DEFAULTS, **(config or {})}
+        self.config_id = config_id(self.config)
+
+    def label(self):
+        return 'CMS Fakeout V1 (sweep & reclaim)'
+
+    def evaluate(self, now, quote, candles, point, state):
+        c = self.config
+        if c['session_enabled'] and not in_window(now, c['session_start_hour'], c['session_end_hour'], c['session_tz']):
+            return None
+        if not candles or len(candles) < c['swing_left'] + c['swing_right'] + 2:
+            return None
+        highs, lows = swing_points(candles, c['swing_left'], c['swing_right'])
+        last = candles[-1]
+        if state.get('fired') == last.time:
+            return None
+        pbuf = c['pierce_buffer_points'] * point
+        side = level = None
+        if highs and last.high > highs[-1][1] + pbuf and last.close < highs[-1][1] and last.time > highs[-1][2]:
+            side, level = 'SELL', highs[-1][1]
+        elif lows and last.low < lows[-1][1] - pbuf and last.close > lows[-1][1] and last.time > lows[-1][2]:
+            side, level = 'BUY', lows[-1][1]
+        if not side:
+            return None
+        buf = c['sl_buffer_points'] * point
+        entry = quote.ask if side == 'BUY' else quote.bid
+        if side == 'SELL':
+            sl = last.high + buf
+            risk = sl - entry
+            tp = entry - c['reward_rr'] * risk
+        else:
+            sl = last.low - buf
+            risk = entry - sl
+            tp = entry + c['reward_rr'] * risk
+        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
+        if not (min_sl <= risk <= max_sl):
+            return None
+        if side == 'BUY' and not (sl < entry < tp):
+            return None
+        if side == 'SELL' and not (tp < entry < sl):
+            return None
+        state['fired'] = last.time
+        session = datetime.fromtimestamp(now, MYT).strftime('%Y-%m-%d') + '@cms'
+        return dict(side=side, signal_reason=f'Fakeout V1 {side} at {round(level, quote.digits)}',
+                    signal_time=now, trigger_price=(quote.bid + quote.ask) / 2.0,
+                    initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
+                    session=session, timeframe=self.timeframe, entry_candle_end=None,
+                    config_snapshot=dict(self.config))
+
+
+class CmsSupplyDemand:
+    """CMS Supply & Demand base (DBR / RBD / RBR / DBD): a tight base between two legs,
+    where the leg OUT of the base sets the zone. A bullish departure marks a DEMAND zone
+    (BUY on return to the zone); a bearish departure marks a SUPPLY zone (SELL on return).
+    Zone = [base low, base high]; the retest is detected from observed ticks. SL beyond the
+    far edge of the zone; TP a fixed reward multiple of risk. An initial, testable model."""
+    strategy_id = 'CMS_SUPPLY_DEMAND'
+    version = 'cms_supply_demand@1'
+    timeframe = 'H1'
+    DEFAULTS = dict(
+        impulse_body_points=150, base_max=3, base_range_points=120, scan=20,
+        sl_buffer_points=60, reward_rr=2.0, min_sl_points=80, max_sl_points=2000,
+        zone_ttl_hours=24, session_enabled=False, session_start_hour=0, session_end_hour=24,
+        session_tz='America/New_York', max_gap_seconds=120, max_positions=1)
+
+    def __init__(self, config=None):
+        self.config = {**self.DEFAULTS, **(config or {})}
+        self.config_id = config_id(self.config)
+
+    def label(self):
+        return 'CMS Supply & Demand base'
+
+    def evaluate(self, now, quote, candles, point, state):
+        c = self.config
+        ref = (quote.bid + quote.ask) / 2.0
+        prev = state.get('ref_price')
+        state['ref_price'] = ref
+        if c['session_enabled'] and not in_window(now, c['session_start_hour'], c['session_end_hour'], c['session_tz']):
+            return None
+        if not candles or len(candles) < 3:
+            return None
+        imp_body = c['impulse_body_points'] * point
+        base_rng = c['base_range_points'] * point
+        n = len(candles)
+        zone = state.get('zone')
+        fired = state.get('fired_zone')
+        # most recent base->impulse structure within the scan window
+        new = None
+        lo = max(1, n - c['scan'])
+        for k in range(n - 1, lo - 1, -1):
+            imp = candles[k]
+            if abs(imp.close - imp.open) < imp_body:
+                continue
+            base = []
+            j = k - 1
+            while j >= 0 and (candles[j].high - candles[j].low) <= base_rng and len(base) < c['base_max']:
+                base.append(candles[j])
+                j -= 1
+            if not base:
+                continue
+            new = dict(side=('BUY' if imp.close > imp.open else 'SELL'),
+                       low=min(b.low for b in base), high=max(b.high for b in base),
+                       imp_time=imp.time, created=now)
+            break
+        if new and new['imp_time'] != fired and (not zone or zone['imp_time'] != new['imp_time']):
+            zone = new
+            state['zone'] = zone
+        if zone and (now - zone.get('created', now)) > c['zone_ttl_hours'] * 3600:
+            state['zone'] = zone = None
+        if not zone or prev is None:
+            return None
+        side = None
+        if zone['side'] == 'BUY' and prev > zone['high'] >= ref:     # fell back into demand zone top
+            side = 'BUY'
+        elif zone['side'] == 'SELL' and prev < zone['low'] <= ref:   # rose back into supply zone bottom
+            side = 'SELL'
+        if not side:
+            return None
+        buf = c['sl_buffer_points'] * point
+        entry = quote.ask if side == 'BUY' else quote.bid
+        if side == 'BUY':
+            sl = zone['low'] - buf
+            risk = entry - sl
+            tp = entry + c['reward_rr'] * risk
+        else:
+            sl = zone['high'] + buf
+            risk = sl - entry
+            tp = entry - c['reward_rr'] * risk
+        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
+        if not (min_sl <= risk <= max_sl):
+            return None
+        if side == 'BUY' and not (sl < entry < tp):
+            return None
+        if side == 'SELL' and not (tp < entry < sl):
+            return None
+        state['fired_zone'] = zone['imp_time']
+        state['zone'] = None
+        session = datetime.fromtimestamp(now, MYT).strftime('%Y-%m-%d') + '@cms'
+        kind = 'Demand' if side == 'BUY' else 'Supply'
+        return dict(side=side,
+                    signal_reason=f"{kind} zone {round(zone['low'], quote.digits)}-{round(zone['high'], quote.digits)}",
+                    signal_time=now, trigger_price=ref,
+                    initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
+                    session=session, timeframe=self.timeframe, entry_candle_end=None,
+                    config_snapshot=dict(self.config))
+
+
+class CmsSsr:
+    """CMS SSR (Significant Support & Resistance), basic reaction model. A level touched
+    at least `min_touches` times (swing pivots clustered within tolerance) is treated as
+    significant; price reacting back into it is faded: SELL at significant resistance on a
+    retest up, BUY at significant support on a retest down. The 'King' selection in CMS is
+    not publicly confirmed, so `min_touches`/`cluster_points` are invented thresholds."""
+    strategy_id = 'CMS_SSR'
+    version = 'cms_ssr@1'
+    timeframe = 'H1'
+    DEFAULTS = dict(
+        swing_left=2, swing_right=2, min_touches=2, cluster_points=120, sl_buffer_points=80,
+        reward_rr=2.0, min_sl_points=80, max_sl_points=1200, session_enabled=False,
+        session_start_hour=0, session_end_hour=24, session_tz='America/New_York',
+        max_gap_seconds=120, max_positions=1)
+
+    def __init__(self, config=None):
+        self.config = {**self.DEFAULTS, **(config or {})}
+        self.config_id = config_id(self.config)
+
+    def label(self):
+        return 'CMS Significant S/R (SSR)'
+
+    @staticmethod
+    def _significant(prices, tol, min_touches):
+        best, best_n = None, 0
+        for p in prices:
+            members = [q for q in prices if abs(q - p) <= tol]
+            if len(members) >= min_touches and len(members) > best_n:
+                best, best_n = sum(members) / len(members), len(members)
+        return best
+
+    def evaluate(self, now, quote, candles, point, state):
+        c = self.config
+        ref = (quote.bid + quote.ask) / 2.0
+        prev = state.get('ref_price')
+        state['ref_price'] = ref
+        if c['session_enabled'] and not in_window(now, c['session_start_hour'], c['session_end_hour'], c['session_tz']):
+            return None
+        if not candles or len(candles) < c['swing_left'] + c['swing_right'] + 2:
+            return None
+        highs, lows = swing_points(candles, c['swing_left'], c['swing_right'])
+        tol = c['cluster_points'] * point
+        res = self._significant([h[1] for h in highs], tol, c['min_touches'])
+        sup = self._significant([l[1] for l in lows], tol, c['min_touches'])
+        if prev is None:
+            return None
+        side = level = None
+        if res is not None and prev < res <= ref:       # retest up into significant resistance -> fade SELL
+            side, level = 'SELL', res
+        elif sup is not None and prev > sup >= ref:      # retest down into significant support -> BUY
+            side, level = 'BUY', sup
+        if not side:
+            return None
+        key = f'{side}:{round(level, quote.digits)}'
+        if state.get('fired') == key:
+            return None
+        buf = c['sl_buffer_points'] * point
+        entry = quote.ask if side == 'BUY' else quote.bid
+        if side == 'SELL':
+            sl = level + buf
+            risk = sl - entry
+            tp = entry - c['reward_rr'] * risk
+        else:
+            sl = level - buf
+            risk = entry - sl
+            tp = entry + c['reward_rr'] * risk
+        min_sl, max_sl = c['min_sl_points'] * point, c['max_sl_points'] * point
+        if not (min_sl <= risk <= max_sl):
+            return None
+        if side == 'BUY' and not (sl < entry < tp):
+            return None
+        if side == 'SELL' and not (tp < entry < sl):
+            return None
+        state['fired'] = key
+        session = datetime.fromtimestamp(now, MYT).strftime('%Y-%m-%d') + '@cms'
+        return dict(side=side, signal_reason=f'SSR {side} at significant {round(level, quote.digits)}',
+                    signal_time=now, trigger_price=ref,
+                    initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
+                    session=session, timeframe=self.timeframe, entry_candle_end=None,
+                    config_snapshot=dict(self.config))
+
+
 # --------------------------------------------------------------------------- simulator
 class Simulator:
     """Simulated fills and exits. BUY fills Ask / exits Bid; SELL fills Bid / exits Ask."""
@@ -557,6 +910,14 @@ def build_agent(strategy_id, config):
         return PrevCandleBreakoutH1(config)
     if strategy_id == CounterTrendScalper.strategy_id:
         return CounterTrendScalper(config)
+    if strategy_id == CmsSupportResistanceFlip.strategy_id:
+        return CmsSupportResistanceFlip(config)
+    if strategy_id == CmsFakeoutV1.strategy_id:
+        return CmsFakeoutV1(config)
+    if strategy_id == CmsSupplyDemand.strategy_id:
+        return CmsSupplyDemand(config)
+    if strategy_id == CmsSsr.strategy_id:
+        return CmsSsr(config)
     if strategy_id == 'ORB_BREAKOUT_RETEST':
         try:
             from live_test_orb import ORBAgent
@@ -569,7 +930,8 @@ def build_agent(strategy_id, config):
 def ensure_default_agents(engine, cfg=None):
     """Register the starting agents (paused) if they are not already present. XAUUSD first."""
     base = 'XAUUSD'
-    defaults = [PrevCandleBreakoutH1(), CounterTrendScalper()]
+    defaults = [PrevCandleBreakoutH1(), CounterTrendScalper(), CmsSupportResistanceFlip(),
+                CmsFakeoutV1(), CmsSupplyDemand(), CmsSsr()]
     orb = build_agent('ORB_BREAKOUT_RETEST', (cfg or {}).get('orb') or {})
     if orb is not None:
         defaults.append(orb)
