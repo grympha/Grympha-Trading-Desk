@@ -1,0 +1,227 @@
+PANDUAN PASANG GRYMPHA TRADING DESK PADA PC WINDOWS LAIN
+Tanpa Windows Launcher — PowerShell manual — v1.13
+
+PAKEJ PEMASANGAN PENUH
+Extract folder bbma_bot daripada ZIP. Ia sudah mengandungi fail asas dan
+update terkini. Untuk pilihan pemasangan melalui launcher, lihat INSTALL.txt.
+
+============================================================
+1. SEDIAKAN FOLDER BOT LENGKAP
+============================================================
+Contoh lokasi pada PC baharu:
+  D:\Grock AI Bot\bbma_bot
+
+Pastikan ada bbma_bot.py, requirements.txt, config.example.json, scanner.py,
+risk_check.py, demo_execution.py, dashboard_journal.py, trade_review.py,
+fail Python sokongan, dashboard.html, folder js (semua fail .js) dan dashboard.css.
+
+Jika MEMINDAHKAN bot yang sedang digunakan:
+- Stop bot pada PC asal dahulu dengan Ctrl+C atau butang Stop launcher.
+- Selepas bot berhenti, salin folder lengkap termasuk dashboard.sqlite3 dan
+  fail state supaya history, tetapan lot, review dan rekod order dikekalkan.
+- Jangan padam database/state untuk memaksa setup lama masuk semula.
+- Posisi/pending order di MT5 boleh kekal walaupun bot dihentikan.
+- Jangan jalankan dua salinan bot execution pada akaun yang sama serentak.
+
+Jangan salin .venv daripada PC asal. Jika tersalin, gunakan persekitaran baharu
+untuk PC baharu; .venv tidak direka untuk dipindahkan antara PC/path.
+Simpan .env dan konfigurasi yang mengandungi kelayakan secara peribadi.
+
+============================================================
+2. PASANG PYTHON 3.11 64-BIT DAN MT5
+============================================================
+Pasang Python 3.11 64-bit daripada laman rasmi python.org. Pastikan Python
+Launcher (arahan py) turut dipasang. Pasang MT5 daripada broker anda.
+
+Buka MT5, login ke akaun DEMO dan pastikan terminal connected.
+
+Buka PowerShell dan semak:
+  py -3.11 --version
+  py -3.11 -c "import struct; print(struct.calcsize('P') * 8)"
+
+Output pertama mesti Python 3.11.x; output kedua mesti 64.
+Jika 'py' tidak dikenali, baiki pemasangan Python/Launcher dahulu.
+
+============================================================
+3. CIPTA ENVIRONMENT DAN PASANG DEPENDENCIES
+============================================================
+Dalam PowerShell, jalankan SATU PERSATU:
+
+  cd "D:\Grock AI Bot\bbma_bot"
+
+  py -3.11 -m venv .venv
+
+  .\.venv\Scripts\python.exe -m pip install --upgrade pip
+
+  .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+Tidak perlu activate environment. Semua arahan berikut terus menggunakan
+python.exe di dalam .venv. Tidak perlu ubah PowerShell execution policy.
+
+Jika dependency gagal dipasang, semak internet dan mesej ralat. Jangan terus
+jalankan execution jika requirements belum lengkap.
+
+============================================================
+4. SEMAK CONFIG.JSON DAN .ENV
+============================================================
+Buka konfigurasi:
+  notepad config.json
+
+Semak terminal_path mengikut lokasi MT5 sebenar pada PC baharu.
+Contoh dalam JSON (backslash mesti digandakan):
+  "terminal_path": "C:\\Program Files\\RoboForex MT5 Terminal\\terminal64.exe"
+
+Semak:
+- symbols menggunakan nama tepat broker, termasuk suffix jika ada.
+- Confluence symbols menggunakan senarai pair yang sama.
+- Semua 9 instrumen yang biasa digunakan:
+  XAUUSD, GBPJPY, EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, USDCHF, NZDUSD.
+  Gunakan nama broker sebenar jika berbeza.
+- Timestamp offsets disahkan melalui --diagnose-time, bukan diteka.
+- Tetapan/lokasi MT5 Calendar merujuk kepada terminal/data folder PC baharu.
+- Kekalkan tetapan risk, tracking dan strategi sedia ada semasa migrasi.
+
+Jika menggunakan Telegram, semak .env mempunyai token DAN chat ID yang betul.
+Jika tidak menggunakan Telegram, kosongkan KEDUA-DUANYA. Jangan kongsi token.
+
+============================================================
+5. SEDIAKAN MARKET WATCH DAN HISTORY MT5
+============================================================
+- Tambah kesemua pair ke Market Watch.
+- Buka chart H4, H1, M15 dan M5 untuk pair tersebut dan biarkan history dimuatkan.
+- Pastikan quote bergerak dan market memang dibuka untuk instrumen berkenaan.
+
+Jika menggunakan MT5 Calendar:
+1. Dalam MT5 pilih File > Open Data Folder.
+2. Salin BBMA_MT5_Calendar_Bridge.mq5 ke MQL5\Experts.
+3. Buka fail tersebut dalam MetaEditor dan Compile (F7).
+4. Semak tiada compilation error; refresh Navigator jika perlu.
+5. Attach EA bridge pada SATU chart dan biarkan terminal berjalan.
+6. Semak fail bbma_mt5_calendar.json di MQL5\Files bagi terminal berkenaan.
+7. Ikut tetapan bridge/calendar sedia ada dan semak status News filter dashboard.
+
+Bridge calendar hanya membekalkan data kalender; ia bukan executor order.
+Jika kalender diperlukan tetapi unavailable, entry boleh disekat mengikut
+polisi news sedia ada. Jangan anggap 'unavailable' bermaksud tiada berita.
+
+Untuk DEMO execution:
+- Akaun mesti DEMO jenis HEDGING.
+- Benarkan algorithmic trading pada terminal/akaun.
+- Dalam Options > Expert Advisors, pastikan pilihan
+  'Disable automatic trading through the external Python API' tidak ditanda.
+- Jika terminal diurus syarikat, ikut polisi akses peranti tersebut.
+
+============================================================
+6. SEMAK VERSI DAN MASA
+============================================================
+  .\.venv\Scripts\python.exe bbma_bot.py --version
+
+Versi backend selepas update ini sepatutnya v1.13 (counterfactual replay + versions).
+
+Kemudian:
+  .\.venv\Scripts\python.exe bbma_bot.py --diagnose-time
+
+Semak terminal connected, quote bergerak, masa Windows dan broker timestamps.
+Jangan infer offset daripada quote lama yang tidak bergerak. Offset PC asal
+mungkin sesuai untuk broker sama, tetapi tetap perlu disahkan pada PC baharu.
+
+============================================================
+7. JALANKAN ANALISIS + DASHBOARD DAHULU
+============================================================
+  .\.venv\Scripts\python.exe bbma_bot.py --dashboard
+
+Buka browser pada PC yang MENJALANKAN BOT:
+  http://127.0.0.1:8765
+
+Pastikan status MT5/broker/account, pair, kalender dan analisis kelihatan.
+Tekan Ctrl+F5 jika dashboard masih menggunakan fail UI lama.
+
+Mod ini tidak menghantar order baharu. Biarkan PowerShell dan MT5 terbuka.
+PC mesti tidak sleep untuk bot terus berjalan. Ctrl+C menghentikan bot.
+
+Alamat 127.0.0.1 hanya untuk PC tersebut. Akses telefon/PC lain belum diaktifkan
+oleh pemasangan ini; Tailscale/akses remote memerlukan konfigurasi berasingan.
+
+============================================================
+8. PREFLIGHT DAN EXECUTION DEMO (JIKA DIKEHENDAKI)
+============================================================
+Stop mod analisis dahulu dengan Ctrl+C.
+
+Semak kelayakan demo tanpa menghantar order:
+  .\.venv\Scripts\python.exe bbma_bot.py --demo-check
+
+Selepas semakan lulus, untuk membenarkan order pada akaun demo:
+  .\.venv\Scripts\python.exe bbma_bot.py --dashboard --demo-execution
+
+Jalankan SATU proses bot sahaja. Installing update tidak mengaktifkan execution;
+--demo-execution ialah pilihan jelas untuk menghantar order demo.
+
+Tetapan lot mengikut pair di dashboard digunakan oleh BBMA dan Confluence.
+Nilai fixed lot pair mengatasi Risk % umum untuk pair itu. Ruang kosong ikut
+risk sizing umum, atau fallback --demo-lot (default 0.01) jika risk sizing off.
+Perubahan sizing terpakai kepada submission baharu, bukan volume order sedia ada.
+
+============================================================
+9. TRADE REVIEW
+============================================================
+Buka tab Trade Review selepas bot v1.10 berjalan.
+- Closed bot trades dalam ledger akaun demo yang disahkan boleh dikaji semula.
+- Rakaman context baharu bermula apabila bot yang dikemas kini berjalan.
+- Review dikemas kini sekitar setiap 30 saat; dashboard sekitar setiap 5 saat.
+- Data lama yang tidak direkod akan ditanda unavailable, bukan direka semula.
+- Modul research ialah pemerhati tempatan dan cadangan ujian; ia tidak mengubah
+  rules, SL/TP atau order secara automatik. Tiada API key AI diperlukan.
+
+Rujuk TRADE_REVIEW.md untuk batas data dan pengiraan MAE/MFE.
+
+============================================================
+10. TROUBLESHOOTING RINGKAS
+============================================================
+ModuleNotFoundError:
+  Pastikan guna .\.venv\Scripts\python.exe, kemudian ulang pemasangan requirements.
+
+MT5 initialize failed / disconnected:
+  Semak terminal_path, buka terminal yang betul dan login semula.
+
+Insufficient history:
+  Buka timeframe yang disebut dan tunggu history dimuat turun.
+
+Stale quote / timestamp ahead:
+  Jalankan --diagnose-time. Semak Windows clock, connection, quote bergerak
+  dan offset yang disahkan. Jangan matikan pemeriksaan freshness.
+
+Port 8765 already in use:
+  Semak PowerShell/launcher lain dan stop proses bot/dashboard lama dengan betul.
+  Jangan hidupkan salinan execution kedua untuk mengatasi masalah port.
+
+Dashboard nampak versi lama:
+  Semak folder yang sedang dijalankan, --version, kemudian Ctrl+F5.
+
+Windows Security / Smart App Control menyekat fail:
+  Catat nama fail dan mesej sekatan untuk diagnosis. Panduan ini tidak
+  memerlukan anda mematikan perlindungan Windows atau bypass polisi.
+
+Penutupan bot:
+  Ctrl+C menghentikan pemantauan dan pengurusan bot. Posisi/pending orders
+  serta SL/TP yang sudah berada di broker kekal; semak MT5 secara manual.
+
+AI SHADOW v1.11: Rujuk AI_SHADOW.md. Model bermula NOT TRAINED, memerlukan
+300 outcome berlabel / 20 tarikh UTC sebelum cuba latihan. Semua skor SHADOW
+dan tidak mengubah order. Tiada API key atau dependency baharu diperlukan.
+
+PORTFOLIO / EXECUTION HEALTH v1.12
+Buka tab Execution & Health. Portfolio Guard bermula MONITOR ONLY. Semak
+had sendiri, tick Enforce portfolio limits dan Save untuk sekat entry baharu.
+Audit bermula selepas update. External watchdog automatik menulis status dan
+amaran ke health_watchdog.json / health_alerts.jsonl; tiada amaran remote.
+Jangan jalankan dua salinan execution pada akaun sama. Rujuk
+PORTFOLIO_EXECUTION_HEALTH.md untuk pengiraan, scope dan batas ciri.
+
+RESEARCH LAB v1.13
+Counterfactual Replay dan Version Comparison berada di tab Research Lab.
+Jalankan replay_worker.py --diagnose untuk semak domain masa HISTORY secara
+read-only. Jangan salin quote/bar offset secara automatik. Sahkan raw history
+offset dan query offset (biasanya 0 UTC) secara berasingan, masukkan kos/slippage
+andaian dan Save. Tunggu horizon matang sebelum replay. Semua hasil SIMULATED,
+bukan broker P/L; tiada perubahan order live atau label latihan AI.
+Rujuk COUNTERFACTUAL_REPLAY_AND_VERSIONS.md untuk panduan lengkap dan CSV/retry.

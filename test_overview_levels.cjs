@@ -1,0 +1,30 @@
+// Run: node test_overview_levels.cjs. Offline regression for Overview overlays.
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=require('./dashboard_source.cjs');
+const context={esc:v=>String(v??''),date:()=>''};vm.createContext(context);
+vm.runInContext(source.slice(source.indexOf('function overviewLevels('),source.indexOf('function chart(){')),context);
+vm.runInContext(source.slice(source.indexOf('function levelChart('),source.indexOf('function tradeDetails(')),context);
+const signal=(extra={})=>({strategy:'BBMA',symbol:'AUDUSD',key:'setup1',created:100,lifecycle:'PENDING',actionable:true,entry:1.1,stop_loss:1.09,tp1:1.11,tp2:1.12,...extra});
+const order=(extra={})=>({strategy:'BBMA',symbol:'AUDUSD',setup_key:'setup1',created:110,updated:200,status:'CLOSED',reference:1.1,actual_entry:1.1001,sl:1.09,tp1:1.11,tp2:1.12,...extra});
+const get=(orders=[],signals=[],strategy='BBMA')=>context.overviewLevels({demo_orders:orders,signals},'AUDUSD',strategy);
+const empty=v=>assert.equal(Object.keys(v).length,0);
+let count=0;
+function test(name,fn){fn();count++;console.log('PASS '+name);}
+test('closed trade clears every level without deleting history',()=>{const row=order();empty(get([row],[signal()]));assert.equal(row.reference,1.1);});
+test('closed execution suppresses stale linked active signal',()=>empty(get([order()],[signal({created:300})])));
+test('legacy older signal does not resurrect after broker close',()=>empty(get([order({setup_key:undefined})],[signal()])));
+test('new actionable setup after close restores levels',()=>assert.equal(get([order()],[signal({key:'setup2',created:300})]).reference,1.1));
+test('new running position supersedes older closed history regardless of input order',()=>{const live=order({status:'OPEN',created:300,reference:1.2});assert.equal(get([order(),live]).reference,1.2);});
+test('partial close retains levels on remaining position',()=>assert.equal(get([order({status:'OPEN_PARTIAL'})]).tp1,1.11));
+test('pending broker order retains levels',()=>assert.equal(get([order({status:'PENDING'})]).sl,1.09));
+test('uncertain broker response does not imply closed',()=>assert.equal(get([order({status:'UNCERTAIN'})]).reference,1.1));
+test('terminal order states never show levels or reuse linked signal',()=>{for(const status of ['CLOSED','CANCELLED','REJECTED','CHECK_REJECTED','BLOCKED','BLOCKED_NEWS','SKIPPED_BUSY','SKIPPED_OLD_SETUP'])empty(get([order({status})],[signal()]));});
+test('terminal analysis states clear levels without broker records',()=>{for(const lifecycle of ['DEMO_CLOSED','DEMO_CANCELLED','PAPER_CLOSED_SL','PAPER_CLOSED_TP2','EXPIRED','INVALIDATED','MISSED_ENTRY','STALE_REFERENCE'])empty(get([],[signal({lifecycle})]));});
+test('expired/stale pending candidate is withheld',()=>empty(get([],[signal({actionable:false})])));
+test('stale Confluence reference is withheld',()=>empty(get([],[signal({strategy:'CONFLUENCE',lifecycle:'REFERENCE',reference_current:false})],'CONFLUENCE')));
+test('strategies for same pair cannot borrow each other levels',()=>{const live=order({strategy:'CONFLUENCE',status:'OPEN'});empty(get([live,order()]));assert.equal(get([live,order()],[],'CONFLUENCE').reference,1.1);});
+test('pairs cannot borrow each other levels',()=>empty(get([order({symbol:'EURUSD',status:'OPEN'})])));
+test('newest terminal signal never falls back to an older active signal',()=>empty(get([],[signal(),signal({key:'setup2',created:300,lifecycle:'EXPIRED'})])));
+test('refresh from OPEN to CLOSED immediately clears overlays',()=>{const row=order({status:'OPEN'});assert.equal(get([row]).reference,1.1);row.status='CLOSED';empty(get([row]));});
+test('candle-only SVG clears lines while historical chart keeps levels',()=>{const bars=[{time:100,open:1.1,high:1.12,low:1.09,close:1.11}];const overview=context.levelChart(bars,get([order()]),'AUDUSD');assert.ok(overview.includes('<rect'));assert.ok(!overview.includes('stroke-dasharray'));const history=context.levelChart(bars,order(),'AUDUSD');assert.ok(history.includes('stroke-dasharray'));});
+console.log(count+' regression cases passed');

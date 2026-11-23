@@ -1,0 +1,41 @@
+# Secrets
+.env
+
+# Per-machine config (contains live account + terminal path); use config.example.json as the template
+config.json
+config.*.json
+config.json.backup.*
+
+# Runtime state / dedup
+state.json
+confluence_state.json
+orb_state.json
+launcher_settings.json
+
+# Databases and WAL/SHM
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Decision / audit logs
+decisions.jsonl
+confluence_decisions.jsonl
+orb_decisions.jsonl
+logs/
+
+# Runtime locks
+*.lock
+bot.runtime.lock
+
+# Backups
+backups/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+Thumbs.db
+desktop.ini

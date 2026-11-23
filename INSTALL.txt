@@ -1,0 +1,45 @@
+GRYMPHA TRADING DESK v1.13
+Full Windows installation
+
+1. Install Python 3.11 64-bit with pip, Tcl/Tk and Python Launcher, and install
+   your broker's MT5 terminal. Open MT5 and log in to your intended DEMO account.
+2. Extract the ZIP. Open the extracted bbma_bot folder and run START_APP.cmd.
+3. In the launcher, click Setup. It creates .venv, installs dependencies and
+   copies config.json and .env from the provided templates if missing.
+4. Select the intended MT5 terminal in the launcher. Edit config.json if the
+   broker has symbol suffixes. Use the exact broker names in both symbols lists.
+5. Start in Analysis only mode and verify market data and timestamps. The
+   dashboard normally opens at http://127.0.0.1:8765.
+6. For DEMO orders, choose DEMO execution after confirming the intended
+   hedging account and enabling the required Algo Trading permissions in MT5.
+   If using the MT5 news filter, compile and attach the bundled calendar bridge
+   first. The manual guide includes the bridge steps.
+
+Optional Telegram: enter your own token and chat ID in the local .env file.
+Optional manual installation: see INSTALL_PC_BARU_TANPA_LAUNCHER.txt.
+
+Feature locations
+- Settings: pair switches by strategy, BBMA Structural TP and separate
+  BBMA/Confluence Auto Early Exit controls.
+- System Health: strategy agent and shared service statuses.
+- Trade Review: filter and download performance CSV/PDF. ReportLab installs
+  as part of Setup and is required for PDF exports.
+
+If moving an existing installation, stop the original bot before moving its
+database and settings. Leave its broker orders and positions accounted for on
+the intended terminal. Copy your own config.json, .env and dashboard.sqlite3
+privately if needed. Do not run two executing copies on the same MT5 account.
+
+REAL EXECUTION
+Analysis only is the default when the launcher opens. DEMO execution and REAL
+execution are explicit choices. To enable REAL for your intended hedging account,
+edit config.json under real_execution. Set account_login to the numeric MT5
+account number and account_server to the exact broker server name. No broker
+password is needed in this file. Use the REAL execution radio button, then Start
+bot. Review the account and effective risk settings in the confirmation dialog.
+The same sizing and portfolio settings are used in both execution modes.
+REAL Early Exit defaults OFF for both strategies. Configure it separately in
+real_execution.auto_early_exit with boolean BBMA and CONFLUENCE keys.
+The dashboard switches remain DEMO settings.
+CLI: python bbma_bot.py --real-check verifies the account without sending orders.
+CLI: python bbma_bot.py --dashboard --real-execution explicitly enables REAL.
