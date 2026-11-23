@@ -927,15 +927,34 @@ def build_agent(strategy_id, config):
     return None
 
 
+CORE_AGENTS = (PrevCandleBreakoutH1, CounterTrendScalper, CmsSupportResistanceFlip,
+               CmsFakeoutV1, CmsSupplyDemand, CmsSsr)
+
+
+def live_test_symbols(cfg):
+    """Pairs the default agents run on. `live_test_symbols` in config overrides; otherwise the
+    dashboard's configured pairs (`symbols`); otherwise XAUUSD. XAUUSD is listed first, de-duped."""
+    cfg = cfg or {}
+    raw = cfg.get('live_test_symbols') or cfg.get('symbols') or ['XAUUSD']
+    out = []
+    for s in (['XAUUSD'] if 'XAUUSD' in raw else []) + list(raw):
+        if isinstance(s, str) and s and s not in out:
+            out.append(s)
+    return out
+
+
 def ensure_default_agents(engine, cfg=None):
-    """Register the starting agents (paused) if they are not already present. XAUUSD first."""
-    base = 'XAUUSD'
-    defaults = [PrevCandleBreakoutH1(), CounterTrendScalper(), CmsSupportResistanceFlip(),
-                CmsFakeoutV1(), CmsSupplyDemand(), CmsSsr()]
-    orb = build_agent('ORB_BREAKOUT_RETEST', (cfg or {}).get('orb') or {})
+    """Register the starting agents (paused) if not already present. The six core agents run on
+    every configured pair; ORB (if available) stays on XAUUSD, its configured instrument."""
+    cfg = cfg or {}
+    for base in live_test_symbols(cfg):
+        for cls in CORE_AGENTS:
+            agent = cls()
+            aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
+            if aid not in engine.agents:
+                engine.register(agent, base, 'PAUSED')
+    orb = build_agent('ORB_BREAKOUT_RETEST', cfg.get('orb') or {})
     if orb is not None:
-        defaults.append(orb)
-    for agent in defaults:
-        aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
+        aid = f"{orb.strategy_id}|XAUUSD|{orb.config_id}"
         if aid not in engine.agents:
-            engine.register(agent, base, 'PAUSED')
+            engine.register(orb, 'XAUUSD', 'PAUSED')

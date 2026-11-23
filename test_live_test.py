@@ -553,6 +553,18 @@ class CmsRegistration(unittest.TestCase):
             self.assertIn(sid, sids)
         self.assertTrue(all(la.status == 'PAUSED' for la in eng.agents.values()))
 
+    def test_default_agents_cover_all_configured_pairs(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        eng = LiveTestEngine(Store(Path(tmp.name) / 'db.sqlite3'))
+        ensure_default_agents(eng, {'symbols': ['XAUUSD', 'EURUSD', 'GBPJPY']})
+        pairs = {la.base_symbol for la in eng.agents.values()}
+        self.assertEqual(pairs, {'XAUUSD', 'EURUSD', 'GBPJPY'})
+        # six core agents registered on each pair (ORB is XAUUSD-only and optional)
+        for base in ('XAUUSD', 'EURUSD', 'GBPJPY'):
+            core = {la.agent.strategy_id for la in eng.agents.values()
+                    if la.base_symbol == base and la.agent.strategy_id != 'ORB_BREAKOUT_RETEST'}
+            self.assertEqual(len(core), 6)
+
 
 if __name__ == '__main__':
     unittest.main()
