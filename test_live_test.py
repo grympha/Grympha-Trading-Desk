@@ -295,5 +295,96 @@ class Simulation(unittest.TestCase):
         self.assertEqual(eng.csv_rows('nonexistent'), [])
 
 
+try:
+    from zoneinfo import ZoneInfo
+    NY = ZoneInfo('America/New_York')
+except Exception:
+    NY = None
+
+
+def ny_epoch(hour, minute=0):
+    # 2024-06-12 is a Wednesday in EDT; chosen so the chosen hours are market-open.
+    from datetime import datetime as _dt
+    return _dt(2024, 6, 12, hour, minute, tzinfo=NY).timestamp()
+
+
+def ny_bars(now, overrides):
+    """Hourly bars for 'today' up to now. `overrides` maps an OPEN hour -> (open, close)."""
+    from datetime import datetime as _dt
+    d = _dt.fromtimestamp(now, NY)
+    bars = []
+    for h in range(8, d.hour + 1):
+        t = int(_dt(d.year, d.month, d.day, h, 0, tzinfo=NY).timestamp())
+        if t + 3600 > now:
+            continue
+        o, c = overrides.get(h, (1990.0, 1991.0))
+        bars.append(dict(time=t, open=o, high=max(o, c) + 1, low=min(o, c) - 1, close=c))
+    return bars
+
+
+@unittest.skipIf(NY is None, 'zoneinfo unavailable')
+class CounterTrend(unittest.TestCase):
+    def _engine(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        from live_test import LiveTestEngine
+        return LiveTestEngine(Store(Path(self.tmp.name) / 'db.sqlite3'))
+
+    def _md(self, mt5):
+        return ReadOnlyMarketData(mt5, {'max_tick_age_seconds': 60})
+
+    def test_watermark_high_mark_fades_short_to_tp(self):
+        from live_test import CounterTrendScalper
+        eng = self._engine(); now = ny_epoch(16)
+        # The 3pm-close candle (opens 14:00) is BULLISH -> close 2000 is a HIGH water mark.
+        mt5 = FakeMT5(ny_bars(now, {14: (1998.0, 2000.0)})); md = self._md(mt5)
+        la = eng.register(CounterTrendScalper({'target_points': 300, 'tolerance_points': 50}), 'XAUUSD', 'RUNNING')
+        mt5.set_quote(1994.9, 1995.1, now); eng.run(md, now)                 # baseline below the mark
+        mt5.set_quote(1999.5, 1999.7, now + 1); eng.run(md, now + 1)         # rose to the mark -> SHORT at BID
+        self.assertEqual(len(la.open_positions), 1)
+        pos = la.open_positions[0]
+        self.assertEqual(pos['side'], 'SELL')                                # counter-trend: fade the rise
+        self.assertAlmostEqual(pos['entry_price'], 1999.5)
+        self.assertAlmostEqual(pos['initial_tp'], 1999.5 - 3.0)             # 1:1, target 300 pts
+        self.assertAlmostEqual(pos['initial_sl'], 1999.5 + 3.0)
+        tp = pos['initial_tp']
+        mt5.set_quote(tp - 0.1, tp, now + 2); eng.run(md, now + 2)           # ASK <= TP -> take profit
+        trade = eng.trades(la.id)[0]
+        self.assertEqual(trade['exit_reason'], 'TP')
+        self.assertAlmostEqual(trade['price_pnl'], 3.0)                      # SELL profit = entry - exit
+
+    def test_watermark_low_mark_fades_long(self):
+        from live_test import CounterTrendScalper
+        eng = self._engine(); now = ny_epoch(16)
+        # BEARISH 3pm candle -> close 2000 is a LOW water mark.
+        mt5 = FakeMT5(ny_bars(now, {14: (2002.0, 2000.0)})); md = self._md(mt5)
+        la = eng.register(CounterTrendScalper({'target_points': 300, 'tolerance_points': 50}), 'XAUUSD', 'RUNNING')
+        mt5.set_quote(2004.9, 2005.1, now); eng.run(md, now)                 # baseline above the mark
+        mt5.set_quote(2000.4, 2000.6, now + 1); eng.run(md, now + 1)         # fell to the mark -> LONG at ASK
+        pos = la.open_positions[0]
+        self.assertEqual(pos['side'], 'BUY')
+        self.assertAlmostEqual(pos['entry_price'], 2000.6)
+        self.assertAlmostEqual(abs(pos['entry_price'] - pos['initial_sl']),
+                               abs(pos['initial_tp'] - pos['entry_price']))  # 1:1 RR
+
+    def test_midpoint_mode_long_below_mid(self):
+        from live_test import CounterTrendScalper
+        eng = self._engine(); now = ny_epoch(18, 30)                         # after the 17:00 bar has closed
+        mt5 = FakeMT5(ny_bars(now, {17: (1999.0, 2001.0)})); md = self._md(mt5)  # 17:00 bar mid ~2000
+        la = eng.register(CounterTrendScalper({'mode': 'midpoint', 'mid_hour': 17, 'session_end_hour': 19,
+                                               'target_points': 300}), 'XAUUSD', 'RUNNING')
+        mt5.set_quote(2000.5, 2000.7, now); eng.run(md, now)                 # baseline above mid
+        mt5.set_quote(1999.4, 1999.6, now + 1); eng.run(md, now + 1)         # crossed below mid -> LONG
+        self.assertEqual(la.open_positions[0]['side'], 'BUY')
+
+    def test_no_entry_outside_offhours_window(self):
+        from live_test import CounterTrendScalper
+        eng = self._engine(); now = ny_epoch(11)                            # 11:00 NY -> outside 15-19 window
+        mt5 = FakeMT5(ny_bars(now, {14: (1998.0, 2000.0)})); md = self._md(mt5)
+        la = eng.register(CounterTrendScalper(), 'XAUUSD', 'RUNNING')
+        mt5.set_quote(1994.9, 1995.1, now); eng.run(md, now)
+        mt5.set_quote(1999.6, 1999.8, now + 1); eng.run(md, now + 1)
+        self.assertEqual(len(la.open_positions), 0)
+
+
 if __name__ == '__main__':
     unittest.main()

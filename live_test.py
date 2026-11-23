@@ -60,6 +60,27 @@ def in_session_first_hour(now, open_hour, tz_name, hours=1) -> bool:
     return start <= now < end
 
 
+def in_window(now, start_hour, end_hour, tz_name) -> bool:
+    """True if `now` is within [start_hour, end_hour) local time today (DST-aware)."""
+    tz = ZoneInfo(tz_name) if ZoneInfo else MYT
+    h = datetime.fromtimestamp(now, tz)
+    start = h.replace(hour=int(start_hour), minute=0, second=0, microsecond=0).timestamp()
+    end = h.replace(hour=int(end_hour), minute=0, second=0, microsecond=0).timestamp()
+    return start <= now < end
+
+
+def candle_at_hour(candles, hour, tz_name, now, by='close'):
+    """The CLOSED H1 candle whose open ('open') or close ('close') lands at `hour` local today."""
+    tz = ZoneInfo(tz_name) if ZoneInfo else MYT
+    today = datetime.fromtimestamp(now, tz).date()
+    for b in candles:
+        ref = b.time + (3600 if by == 'close' else 0)
+        lt = datetime.fromtimestamp(ref, tz)
+        if lt.hour == int(hour) and lt.date() == today:
+            return b
+    return None
+
+
 # --------------------------------------------------------------------------- agents
 class PrevCandleBreakoutH1:
     """Previous (closed) H1 candle breakout. BUY when the reference price crosses the
@@ -130,6 +151,87 @@ class PrevCandleBreakoutH1:
         return dict(side=side, signal_reason=reason, signal_time=now, trigger_price=ref,
                     initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
                     session=session, timeframe=self.timeframe, entry_candle_end=float(entry_candle_end),
+                    config_snapshot=dict(self.config))
+
+
+class CounterTrendScalper:
+    """Counter-trend 'water-mark' scalp (Scalping Cheat Sheet #1). Fades the off-hours range:
+    - watermark mode: the reference-hour (default 3pm EST) H1 CLOSE is a water mark. If that candle
+      closed bullish the close is a HIGH water mark -> SHORT when price rises back to it; if bearish it
+      is a LOW water mark -> LONG when price falls back to it.
+    - midpoint mode: the mid-point of the first H1 bar after 5pm EST (the 'dead-time range'). LONG when
+      price crosses below the mid-point, SHORT when it crosses above.
+    1:1 risk/reward; target/stop in MT5 points (defaults suit XAUUSD, NOT the PDF's EUR/USD pips).
+    Crossings are detected from observed ticks; entries only inside the configured off-hours window."""
+    strategy_id = 'COUNTER_TREND_SCALP'
+    version = 'counter_trend_scalp@1'
+    timeframe = 'H1'
+    DEFAULTS = dict(
+        mode='watermark', ref_hour=15, mid_hour=17, ref_tz='America/New_York',
+        session_start_hour=15, session_end_hour=19,
+        tolerance_points=50, target_points=300,
+        max_gap_seconds=120, max_positions=1)
+
+    def __init__(self, config=None):
+        self.config = {**self.DEFAULTS, **(config or {})}
+        self.config_id = config_id(self.config)
+
+    def label(self):
+        return 'Counter-Trend Water-Mark Scalp'
+
+    def evaluate(self, now, quote, candles, point, state):
+        c = self.config
+        ref_price = (quote.bid + quote.ask) / 2.0
+        prev = state.get('ref_price')
+        state['ref_price'] = ref_price
+        if not in_window(now, c['session_start_hour'], c['session_end_hour'], c['ref_tz']):
+            state['session'] = None
+            return None
+        day = datetime.fromtimestamp(now, MYT).strftime('%Y-%m-%d')
+        state['session'] = f"{day}@offhours"
+        if not candles or prev is None:
+            return None
+        tol = c['tolerance_points'] * point
+        tgt = c['target_points'] * point
+        side = reason = None
+        if c['mode'] == 'midpoint':
+            bar = candle_at_hour(candles, c['mid_hour'], c['ref_tz'], now, by='open')
+            if not bar:
+                return None
+            mid = (bar.high + bar.low) / 2.0
+            level_key = f"mid:{int(bar.time)}"
+            if state.get('fired') == level_key:
+                return None
+            if prev >= mid > ref_price:
+                side, reason = 'BUY', f'Below dead-time mid {round(mid, quote.digits)}'
+            elif prev <= mid < ref_price:
+                side, reason = 'SELL', f'Above dead-time mid {round(mid, quote.digits)}'
+        else:  # watermark
+            bar = candle_at_hour(candles, c['ref_hour'], c['ref_tz'], now, by='close')
+            if not bar:
+                return None
+            mark = bar.close
+            bullish = bar.close >= bar.open
+            level_key = f"wm:{int(bar.time)}"
+            if state.get('fired') == level_key:
+                return None
+            if bullish and prev < mark - tol <= ref_price:      # rose to the high water mark -> fade short
+                side, reason = 'SELL', f'Hit high water mark {round(mark, quote.digits)}'
+            elif (not bullish) and prev > mark + tol >= ref_price:  # fell to the low water mark -> fade long
+                side, reason = 'BUY', f'Hit low water mark {round(mark, quote.digits)}'
+        if not side:
+            return None
+        entry = quote.ask if side == 'BUY' else quote.bid
+        if side == 'BUY':
+            sl, tp = entry - tgt, entry + tgt
+        else:
+            sl, tp = entry + tgt, entry - tgt
+        if tgt <= 0 or not (sl < entry < tp if side == 'BUY' else tp < entry < sl):
+            return None
+        state['fired'] = level_key
+        return dict(side=side, signal_reason=reason, signal_time=now, trigger_price=ref_price,
+                    initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
+                    session=state['session'], timeframe=self.timeframe, entry_candle_end=None,
                     config_snapshot=dict(self.config))
 
 
@@ -453,6 +555,8 @@ class LiveTestEngine:
 def build_agent(strategy_id, config):
     if strategy_id == PrevCandleBreakoutH1.strategy_id:
         return PrevCandleBreakoutH1(config)
+    if strategy_id == CounterTrendScalper.strategy_id:
+        return CounterTrendScalper(config)
     if strategy_id == 'ORB_BREAKOUT_RETEST':
         try:
             from live_test_orb import ORBAgent
@@ -465,7 +569,7 @@ def build_agent(strategy_id, config):
 def ensure_default_agents(engine, cfg=None):
     """Register the starting agents (paused) if they are not already present. XAUUSD first."""
     base = 'XAUUSD'
-    defaults = [PrevCandleBreakoutH1()]
+    defaults = [PrevCandleBreakoutH1(), CounterTrendScalper()]
     orb = build_agent('ORB_BREAKOUT_RETEST', (cfg or {}).get('orb') or {})
     if orb is not None:
         defaults.append(orb)
