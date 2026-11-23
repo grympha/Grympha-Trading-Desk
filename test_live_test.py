@@ -13,9 +13,11 @@ from pathlib import Path
 from types import SimpleNamespace as N
 
 from dashboard_store import Store
-from market_data import ReadOnlyMarketData, Bar
-from live_test import (LiveTestEngine, PrevCandleBreakoutH1, Simulator, MYT,
-                       in_session_first_hour, session_first_hour, compute_stats, VALID, UNCERTAIN, DATA_GAP)
+from market_data import ReadOnlyMarketData, Bar, Quote
+from live_test import (LiveTestEngine, PrevCandleBreakoutH1, CmsSupportResistanceFlip,
+                       CmsFakeoutV1, CmsSupplyDemand, CmsSsr, build_agent, ensure_default_agents,
+                       Simulator, MYT, in_session_first_hour, session_first_hour, swing_points,
+                       compute_stats, VALID, UNCERTAIN, DATA_GAP)
 
 POINT = 0.01
 DIGITS = 2
@@ -384,6 +386,172 @@ class CounterTrend(unittest.TestCase):
         mt5.set_quote(1994.9, 1995.1, now); eng.run(md, now)
         mt5.set_quote(1999.6, 1999.8, now + 1); eng.run(md, now + 1)
         self.assertEqual(len(la.open_positions), 0)
+
+
+def cms_bars(now, lows, highs, closes):
+    """Closed H1 bars from parallel low/high/close lists (open = first close-ish)."""
+    base = int(now // 3600) * 3600 - (len(lows) + 2) * 3600
+    return [Bar(base + i * 3600, closes[i], highs[i], lows[i], closes[i]) for i in range(len(lows))]
+
+
+class CmsFlip(unittest.TestCase):
+    NOW = 1_700_007_200.0
+
+    def q(self, bid, ask):
+        return Quote('XAUUSD', bid, ask, self.NOW, 0.0, POINT, DIGITS)
+
+    def test_swing_points_detects_pivots(self):
+        bars = cms_bars(self.NOW, [1995, 1994, 1993, 1992, 1991, 1990, 1992, 1993, 1991, 1988],
+                        [1998, 1997, 1996, 1995, 1994, 1993, 1995, 1996, 1994, 1990],
+                        [1996] * 10)
+        _, lows = swing_points(bars, 2, 2)
+        self.assertEqual(lows[-1][1], 1990)
+
+    def test_sbr_sell_flip_on_retest_up(self):
+        agent = CmsSupportResistanceFlip()
+        bars = cms_bars(self.NOW, [1995, 1994, 1993, 1992, 1991, 1990, 1992, 1993, 1991, 1988],
+                        [1998, 1997, 1996, 1995, 1994, 1993, 1995, 1996, 1994, 1990],
+                        [1996, 1995, 1994, 1993, 1992, 1991, 1993, 1994, 1992, 1988.5])
+        state = {}
+        self.assertIsNone(agent.evaluate(self.NOW, self.q(1988.0, 1988.2), bars, POINT, state))  # below, baseline
+        sig = agent.evaluate(self.NOW + 1, self.q(1989.9, 1990.1), bars, POINT, state)            # retest up to 1990
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig['side'], 'SELL')
+        self.assertIn('SBR', sig['signal_reason'])
+        self.assertAlmostEqual(sig['initial_sl'], 1996.6, places=2)   # protective high 1996 + 60 pts
+        self.assertAlmostEqual(sig['initial_tp'], 1976.5, places=2)   # entry(bid 1989.9) - 2R
+        self.assertTrue(sig['initial_tp'] < 1989.9 < sig['initial_sl'])
+
+    def test_rbs_buy_flip_on_retest_down(self):
+        agent = CmsSupportResistanceFlip()
+        bars = cms_bars(self.NOW, [2002, 2003, 2004, 2005, 2006, 2007, 2005, 2004, 2006, 2010],
+                        [2005, 2006, 2007, 2008, 2009, 2010, 2008, 2007, 2009, 2012],
+                        [2004, 2005, 2006, 2007, 2008, 2009, 2007, 2006, 2008, 2011.5])
+        state = {}
+        self.assertIsNone(agent.evaluate(self.NOW, self.q(2012.0, 2012.2), bars, POINT, state))   # above, baseline
+        sig = agent.evaluate(self.NOW + 1, self.q(2009.9, 2010.1), bars, POINT, state)            # retest down to 2010
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig['side'], 'BUY')
+        self.assertIn('RBS', sig['signal_reason'])
+        self.assertTrue(sig['initial_sl'] < 2010.1 < sig['initial_tp'])
+
+    def test_no_entry_when_level_already_beyond_at_start(self):
+        agent = CmsSupportResistanceFlip()
+        bars = cms_bars(self.NOW, [1995, 1994, 1993, 1992, 1991, 1990, 1992, 1993, 1991, 1988],
+                        [1998, 1997, 1996, 1995, 1994, 1993, 1995, 1996, 1994, 1990],
+                        [1996, 1995, 1994, 1993, 1992, 1991, 1993, 1994, 1992, 1988.5])
+        state = {}
+        # First observed tick is already above the flipped level and stays above: no up-crossing -> no entry.
+        self.assertIsNone(agent.evaluate(self.NOW, self.q(1991.0, 1991.2), bars, POINT, state))
+        self.assertIsNone(agent.evaluate(self.NOW + 1, self.q(1992.0, 1992.2), bars, POINT, state))
+
+    def test_engine_registers_and_opens_sell(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        eng = LiveTestEngine(Store(Path(tmp.name) / 'db.sqlite3'))
+        now = self.NOW
+        raw = cms_bars(now, [1995, 1994, 1993, 1992, 1991, 1990, 1992, 1993, 1991, 1988],
+                       [1998, 1997, 1996, 1995, 1994, 1993, 1995, 1996, 1994, 1990],
+                       [1996, 1995, 1994, 1993, 1992, 1991, 1993, 1994, 1992, 1988.5])
+        bars = [dict(time=b.time, open=b.open, high=b.high, low=b.low, close=b.close) for b in raw]
+        mt5 = FakeMT5(bars); md = ReadOnlyMarketData(mt5, {'max_tick_age_seconds': 60})
+        la = eng.register(CmsSupportResistanceFlip(), 'XAUUSD', 'RUNNING')
+        mt5.set_quote(1988.0, 1988.2, now); eng.run(md, now)
+        self.assertEqual(len(la.open_positions), 0)
+        mt5.set_quote(1989.9, 1990.1, now + 1); eng.run(md, now + 1)
+        self.assertEqual(len(la.open_positions), 1)
+        self.assertEqual(la.open_positions[0]['side'], 'SELL')
+
+
+class CmsFakeout(unittest.TestCase):
+    NOW = 1_700_007_200.0
+
+    def q(self, bid, ask):
+        return Quote('XAUUSD', bid, ask, self.NOW, 0.0, POINT, DIGITS)
+
+    def test_sell_fakeout_pierces_and_closes_back(self):
+        agent = CmsFakeoutV1()
+        bars = cms_bars(self.NOW,
+                        [1993, 1994, 1995, 1996, 1997, 1998, 1996, 1995, 1997, 2000],
+                        [1998, 1999, 2000, 2001, 2002, 2003, 2001, 2000, 2002, 2005],
+                        [1996, 1997, 1998, 1999, 2000, 2001, 1999, 1998, 2000, 2001])
+        # last candle high 2005 pierced swing-high 2003 but closed 2001 back below -> fade SELL
+        sig = agent.evaluate(self.NOW, self.q(2001.0, 2001.2), bars, POINT, {})
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig['side'], 'SELL')
+        self.assertIn('Fakeout V1', sig['signal_reason'])
+        self.assertAlmostEqual(sig['initial_sl'], 2005.6, places=2)   # fakeout high + 60 pts
+        self.assertTrue(sig['initial_tp'] < 2001.0 < sig['initial_sl'])
+
+    def test_no_fakeout_when_closes_beyond_level(self):
+        agent = CmsFakeoutV1()
+        # same pierce but the candle CLOSES above the level (a real breakout) -> no fade
+        bars = cms_bars(self.NOW,
+                        [1993, 1994, 1995, 1996, 1997, 1998, 1996, 1995, 1997, 2000],
+                        [1998, 1999, 2000, 2001, 2002, 2003, 2001, 2000, 2002, 2005],
+                        [1996, 1997, 1998, 1999, 2000, 2001, 1999, 1998, 2000, 2004])
+        self.assertIsNone(agent.evaluate(self.NOW, self.q(2004.0, 2004.2), bars, POINT, {}))
+
+
+class CmsSupplyDemandTests(unittest.TestCase):
+    NOW = 1_700_007_200.0
+
+    def q(self, bid, ask):
+        return Quote('XAUUSD', bid, ask, self.NOW, 0.0, POINT, DIGITS)
+
+    def _bars(self):
+        base = int(self.NOW // 3600) * 3600 - 12 * 3600
+        b = []
+        for i in range(6):
+            b.append(Bar(base + i * 3600, 1990 + i, 1991 + i, 1989 + i, 1990 + i))  # filler, wide range
+        b.append(Bar(base + 6 * 3600, 2000.5, 2001.0, 2000.0, 2000.5))  # base
+        b.append(Bar(base + 7 * 3600, 2000.4, 2001.0, 2000.0, 2000.6))  # base
+        b.append(Bar(base + 8 * 3600, 2000.5, 2001.0, 2000.0, 2000.5))  # base
+        b.append(Bar(base + 9 * 3600, 2001.0, 2005.0, 2000.9, 2004.0))  # bullish impulse -> demand zone 2000-2001
+        return b
+
+    def test_demand_zone_buy_on_return(self):
+        agent = CmsSupplyDemand()
+        bars = self._bars()
+        state = {}
+        self.assertIsNone(agent.evaluate(self.NOW, self.q(2003.0, 2003.2), bars, POINT, state))   # above zone, baseline
+        sig = agent.evaluate(self.NOW + 1, self.q(2000.9, 2001.1), bars, POINT, state)            # returns to zone top
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig['side'], 'BUY')
+        self.assertIn('Demand', sig['signal_reason'])
+        self.assertAlmostEqual(sig['initial_sl'], 1999.4, places=2)   # zone low 2000 - 60 pts
+        self.assertTrue(sig['initial_sl'] < 2001.1 < sig['initial_tp'])
+
+
+class CmsSsrTests(unittest.TestCase):
+    NOW = 1_700_007_200.0
+
+    def q(self, bid, ask):
+        return Quote('XAUUSD', bid, ask, self.NOW, 0.0, POINT, DIGITS)
+
+    def test_significant_resistance_fades_short(self):
+        agent = CmsSsr()
+        highs = [2005, 2008, 2007, 2010, 2007, 2008, 2007, 2010.5, 2007, 2008]
+        bars = cms_bars(self.NOW, [h - 10 for h in highs], highs, [h - 2 for h in highs])
+        state = {}
+        self.assertIsNone(agent.evaluate(self.NOW, self.q(2008.0, 2008.2), bars, POINT, state))    # below, baseline
+        sig = agent.evaluate(self.NOW + 1, self.q(2010.2, 2010.4), bars, POINT, state)             # rises into ~2010.25
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig['side'], 'SELL')
+        self.assertIn('SSR', sig['signal_reason'])
+        self.assertTrue(sig['initial_tp'] < 2010.2 < sig['initial_sl'])
+
+
+class CmsRegistration(unittest.TestCase):
+    def test_build_agent_and_defaults(self):
+        for sid in ('CMS_SR_FLIP', 'CMS_FAKEOUT_V1', 'CMS_SUPPLY_DEMAND', 'CMS_SSR'):
+            self.assertIsNotNone(build_agent(sid, {}))
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        eng = LiveTestEngine(Store(Path(tmp.name) / 'db.sqlite3'))
+        ensure_default_agents(eng, {})
+        sids = {la.agent.strategy_id for la in eng.agents.values()}
+        for sid in ('CMS_SR_FLIP', 'CMS_FAKEOUT_V1', 'CMS_SUPPLY_DEMAND', 'CMS_SSR'):
+            self.assertIn(sid, sids)
+        self.assertTrue(all(la.status == 'PAUSED' for la in eng.agents.values()))
 
 
 if __name__ == '__main__':
