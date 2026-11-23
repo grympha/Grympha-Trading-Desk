@@ -1,7 +1,7 @@
 import json,time,unittest,threading,urllib.request,urllib.error
 from types import SimpleNamespace as N
 from unittest.mock import patch
-from trade_controls import DEFAULTS,validate,estimate,controls
+from trade_controls import DEFAULTS,validate,estimate,controls,validate_windows,in_trade_window,server_minute
 from news_filter import NewsFilter,currencies
 import test_demo_execution as demo_tests
 FakeMT5=demo_tests.FakeMT5
@@ -70,6 +70,53 @@ class RiskNews(unittest.TestCase):
         n=NewsFilter({'news_filter':{'enabled':True}})
         with patch.dict('os.environ',{'TRADING_ECONOMICS_API_KEY':'private:key'}),patch('news_filter.urllib.request.urlopen',return_value=Response()):n.fetch()
         self.assertTrue(n.check('USDJPY')['blocked']);self.assertEqual(n.fetched,0)
+
+class TradeWindows(unittest.TestCase):
+    def test_validate_windows(self):
+        w=validate_windows({'CONFLUENCE':{'enabled':True,'start':'15:00','end':'22:00'}})
+        self.assertEqual(w['CONFLUENCE'],{'enabled':True,'start':'15:00','end':'22:00'})
+        self.assertEqual(validate({**DEFAULTS})['trade_windows'],{})
+        for bad in ({'NOPE':{'enabled':True}},{'ORB':{'start':'9:00'}},{'ORB':{'end':'24:00'}},{'ORB':{'extra':1}}):
+            with self.assertRaises(ValueError):validate_windows(bad)
+    def test_in_trade_window_normal_wrap_and_allday(self):
+        w={'CONFLUENCE':{'enabled':True,'start':'15:00','end':'22:00'}}
+        self.assertTrue(in_trade_window(w,'CONFLUENCE',16*60))
+        self.assertFalse(in_trade_window(w,'CONFLUENCE',9*60))
+        self.assertFalse(in_trade_window(w,'CONFLUENCE',22*60))       # end is exclusive
+        self.assertTrue(in_trade_window(w,'BBMA',9*60))               # no window configured
+        wrap={'ORB':{'enabled':True,'start':'22:00','end':'03:00'}}
+        self.assertTrue(in_trade_window(wrap,'ORB',23*60));self.assertTrue(in_trade_window(wrap,'ORB',2*60))
+        self.assertFalse(in_trade_window(wrap,'ORB',12*60))
+        off={'ORB':{'enabled':False,'start':'22:00','end':'03:00'}}
+        self.assertTrue(in_trade_window(off,'ORB',12*60))             # disabled never blocks
+        allday={'ORB':{'enabled':True,'start':'00:00','end':'00:00'}}
+        self.assertTrue(in_trade_window(allday,'ORB',12*60))          # start==end = all day
+    def test_server_minute_applies_offset(self):
+        base=1_700_000_000  # a fixed UTC epoch
+        self.assertEqual(server_minute(base,2),(server_minute(base,0)+120)%1440)
+
+class WindowGate(unittest.TestCase):
+    setUp=demo_tests.Demo.setUp
+    tearDown=demo_tests.Demo.tearDown
+    result=demo_tests.Demo.result
+    submit=demo_tests.Demo.submit
+    latest=demo_tests.Demo.latest
+    def arm(self,window):
+        with self.store.connect() as db:
+            db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',('trade_controls',json.dumps({**DEFAULTS,'trade_windows':window})))
+        return DemoExecutor(self.mt5,self.store,self.cfg)
+    def test_entry_blocked_outside_window(self):
+        ex=self.arm({'CONFLUENCE':{'enabled':True,'start':'09:00','end':'10:00'}})
+        with patch('trade_controls.server_minute',return_value=11*60):self.submit(ex,self.result())
+        self.assertEqual(self.latest()['status'],'SKIPPED_WINDOW');self.assertEqual(self.mt5.sent,[])
+    def test_entry_allowed_inside_window(self):
+        ex=self.arm({'CONFLUENCE':{'enabled':True,'start':'09:00','end':'10:00'}})
+        with patch('trade_controls.server_minute',return_value=9*60+30):self.submit(ex,self.result())
+        self.assertNotEqual(self.latest()['status'],'SKIPPED_WINDOW')
+    def test_other_strategy_window_does_not_block(self):
+        ex=self.arm({'BBMA':{'enabled':True,'start':'09:00','end':'10:00'}})
+        with patch('trade_controls.server_minute',return_value=11*60):self.submit(ex,self.result())
+        self.assertNotEqual(self.latest()['status'],'SKIPPED_WINDOW')
 
 class ManagedBroker(FakeMT5):
     TRADE_ACTION_SLTP=6
