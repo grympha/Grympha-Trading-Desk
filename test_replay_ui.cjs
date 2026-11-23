@@ -13,5 +13,5 @@ assert.ok($('lab-versions').innerHTML.includes('&lt;test&gt;'));assert.ok($('lab
 assert.ok($('lab-comparisons').innerHTML.includes('Enrolled forward only'));assert.ok($('lab-comparisons').innerHTML.includes('Not enough days'));assert.ok($('details').open);assert.ok($('detail-content').innerHTML.includes('not broker fills'));
 $('lab-cost').value='.09';vm.runInContext('labDirty=true;renderLab()',ctx);assert.equal($('lab-cost').value,'.09');
 for(const id of ['tab-lab','panel-lab','lab-settings-form','lab-version-form','lab-status','lab-rows','lab-comparisons'])assert.equal((html.match(new RegExp('id="'+id+'"','g'))||[]).length,1);
-assert.ok(src.includes("['overview','positions','ledger','trades','history','review','lab','monitor','settings']"));
+assert.ok(src.includes("['overview','positions','ledger','trades','history','review','lab','livetest','monitor','settings']"));
 console.log('Replay UI: assumptions, immutable registry, inconclusive not zero, forward separation, escaping, dirty inputs, details and nine tabs passed');

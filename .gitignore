@@ -11,6 +11,8 @@ state.json
 confluence_state.json
 orb_state.json
 launcher_settings.json
+health_watchdog.json
+live_test_orb_state.json
 
 # Databases and WAL/SHM
 *.sqlite3

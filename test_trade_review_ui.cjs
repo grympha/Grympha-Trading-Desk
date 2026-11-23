@@ -16,5 +16,5 @@ assert.ok(!$('review-patterns').innerHTML.includes('<unsafe>'));assert.ok($('rev
 assert.ok($('details').open);assert.ok($('detail-content').innerHTML.includes('UNKNOWN'));
 ctx.apiOnline=false;vm.runInContext('renderReview()',ctx);assert.ok($('review-state').textContent.includes('LAST REPORTED'));
 for(const id of ['tab-review','panel-review','review-state','review-rows','review-strategy','review-symbol'])assert.equal((html.match(new RegExp('id="'+id+'"','g'))||[]).length,1);
-assert.ok(src.includes("['overview','positions','ledger','trades','history','review','lab','monitor','settings']"));
+assert.ok(src.includes("['overview','positions','ledger','trades','history','review','lab','livetest','monitor','settings']"));
 console.log('Trade Review rendering, escaping, stale state, modal and nine-tab wiring passed');

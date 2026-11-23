@@ -395,6 +395,14 @@ def _run(args):
         orb_scanner=ORBScanner(mt5,ROOT,orb_runner,stamp)
         journal=DashboardJournal(mt5,store,cfg,args,confluence_runner,board,quote_age=quote_age)
         journal.executor=executor
+        live_engine=None
+        if store:
+            try:
+                from live_test import LiveTestEngine, ensure_default_agents
+                live_engine=LiveTestEngine(store)
+                ensure_default_agents(live_engine,cfg)
+            except Exception as exc:
+                logging.warning('Live Test engine unavailable: %s', exc)
         if not args.once:journal.start_monitor()
         notifier=None
         if store and not args.once:
@@ -452,6 +460,12 @@ def _run(args):
                     for strategy in STRATEGIES:
                         for stage in ('Executor','Trade Monitor'):
                             journal.health_event(f'{strategy} {stage}','UNAVAILABLE','Broker reconciliation failed')
+            if live_engine:
+                try:
+                    from market_data import ReadOnlyMarketData
+                    live_engine.run(ReadOnlyMarketData(mt5,cfg))  # SIMULATION ONLY · read-only feed, never the executor
+                except Exception as exc:
+                    logging.warning('Live Test cycle skipped: %s', exc)
             journal.refresh()
             if notifier:
                 try:notifier.check()

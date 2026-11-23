@@ -57,7 +57,7 @@ def build_server(store, port=8765):
             host=self.headers.get('Host','')
             if host not in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}') or origin!='http://'+host or self.headers.get('X-Dashboard-Request')!='controls' or self.headers.get('Content-Type')!='application/json':
                 return self.send(b'Forbidden','text/plain',403)
-            if self.path not in ('/api/controls','/api/pair-controls','/api/bbma-tp-mode','/api/early-exit','/api/portfolio-controls','/api/replay-settings','/api/replay-version','/api/strategy-settings','/api/duplicate-ack','/api/telegram-prefs','/api/telegram-test','/api/backup-now'):return self.send(b'Not found','text/plain',404)
+            if self.path not in ('/api/controls','/api/pair-controls','/api/bbma-tp-mode','/api/early-exit','/api/portfolio-controls','/api/replay-settings','/api/replay-version','/api/strategy-settings','/api/duplicate-ack','/api/telegram-prefs','/api/telegram-test','/api/backup-now','/api/live-test-control'):return self.send(b'Not found','text/plain',404)
             try:
                 size=int(self.headers.get('Content-Length','0'))
                 if not 0<size<=4096:raise ValueError('Invalid length')
@@ -99,6 +99,20 @@ def build_server(store, port=8765):
                     from strategy_settings import save as save_strategy
                     saved=save_strategy(store,json.loads(self.rfile.read(size)))
                     return self.send(json.dumps({'ok':True,'settings':saved}).encode(),'application/json')
+                if self.path=='/api/live-test-control':
+                    from live_test import LiveTestEngine, build_agent
+                    body=json.loads(self.rfile.read(size))
+                    if not isinstance(body,dict):raise ValueError('Invalid Live Test control')
+                    eng=LiveTestEngine(store);action=body.get('action')
+                    if action in ('start','pause'):
+                        if body.get('agent_id') not in eng.agents:raise ValueError('Unknown agent')
+                        eng.set_status(body['agent_id'],'RUNNING' if action=='start' else 'PAUSED')
+                    elif action=='register':
+                        agent=build_agent(body.get('strategy_id'),body.get('config') or {})
+                        if agent is None:raise ValueError('Unknown or unavailable strategy')
+                        eng.register(agent,str(body.get('symbol') or 'XAUUSD'),'PAUSED')
+                    else:raise ValueError('Unknown action')
+                    return self.send(b'{"ok":true}','application/json')
                 if self.path=='/api/bbma-tp-mode':
                     from structural_tp import save_mode
                     save_mode(store,json.loads(self.rfile.read(size)))
@@ -135,6 +149,17 @@ def build_server(store, port=8765):
             if path=='/api/platform':
                 from platform_monitor import summary
                 return self.send(json.dumps(summary(store),allow_nan=False).encode(),'application/json')
+            if path=='/api/live-test':
+                from live_test import LiveTestEngine
+                return self.send(json.dumps(LiveTestEngine(store).report(),allow_nan=False).encode(),'application/json')
+            if path=='/api/live-test.csv':
+                from live_test import LiveTestEngine
+                agent=parse_qs(urlsplit(self.path).query).get('agent',[None])[0]
+                eng=LiveTestEngine(store);rows=eng.csv_rows(agent)
+                buf=io.StringIO(newline='');w=csv.DictWriter(buf,fieldnames=LiveTestEngine.CSV_FIELDS,extrasaction='ignore');w.writeheader()
+                for r in rows:
+                    w.writerow({k:("'"+str(r.get(k,'')) if str(r.get(k,'')).startswith(('=','+','-','@')) else r.get(k,'')) for k in LiveTestEngine.CSV_FIELDS})
+                return self.send(buf.getvalue().encode('utf-8-sig'),'text/csv; charset=utf-8',attachment='live_test_trades.csv')
             if path=='/api/ai-shadow':
                 from ai_shadow import summary as shadow_summary
                 return self.send(json.dumps(shadow_summary(store),allow_nan=False).encode(),'application/json')

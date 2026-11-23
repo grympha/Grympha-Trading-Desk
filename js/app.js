@@ -47,11 +47,12 @@ function refreshPageData(page,now=false){
  if(page==='overview')refreshEquity(now);
  if(page==='review'){refreshReview();refreshAI();}
  if(page==='lab')refreshLab();
+ if(page==='livetest')refreshLiveTest();
 }
 refresh();
 
 // Page tabs preserve filters, current strategy and background polling.
-const pageNames=['overview','positions','ledger','trades','history','review','lab','monitor','settings'];
+const pageNames=['overview','positions','ledger','trades','history','review','lab','livetest','monitor','settings'];
 function showPage(){
  const requested=location.hash.slice(1),page=pageNames.includes(requested)?requested:'overview';
  for(const name of pageNames){const active=name===page,tab=$('tab-'+name);$('panel-'+name).hidden=!active;tab.classList.toggle('selected',active);tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;}
