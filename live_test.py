@@ -104,6 +104,32 @@ def dist(points_param, atr_mult, atr_value, point):
     return None
 
 
+def fvg(c1, c3, side):
+    """A 3-candle Fair Value Gap between candle-1 and candle-3 (candle-2 is the displacement).
+    Bullish: low[c3] > high[c1] (gap = [high c1, low c3]); bearish: high[c3] < low[c1].
+    Returns dict(upper, lower, midpoint, confirm_time, c1_time) or None. Boundaries are stored
+    low-to-high (lower <= upper) regardless of side. Call once candle-3 has CLOSED."""
+    if side == 'BUY' and c3.low > c1.high:
+        lo, hi = c1.high, c3.low
+    elif side == 'SELL' and c3.high < c1.low:
+        lo, hi = c3.high, c1.low
+    else:
+        return None
+    return dict(upper=hi, lower=lo, midpoint=(hi + lo) / 2.0,
+                confirm_time=c3.time, c1_time=c1.time)
+
+
+def engulfs(cur, prev, side):
+    """True if `cur` is a `side`-direction candle whose body covers `prev`'s opposite-direction
+    body. BUY: cur bullish, prev bearish, cur.close >= prev.open and cur.open <= prev.close.
+    SELL mirrors. Used by the M15 FVG + engulfing confirmation agent."""
+    if side == 'BUY':
+        return (cur.close > cur.open and prev.close < prev.open
+                and cur.close >= prev.open and cur.open <= prev.close)
+    return (cur.close < cur.open and prev.close > prev.open
+            and cur.close <= prev.open and cur.open >= prev.close)
+
+
 # --------------------------------------------------------------------------- agents
 class PrevCandleBreakoutH1:
     """Previous (closed) H1 candle breakout. BUY when the reference price crosses the
@@ -670,6 +696,7 @@ class Simulator:
             entry_candle_end=signal.get('entry_candle_end'), status='OPEN',
             data_quality_status=VALID, last_sample_epoch=now, last_price=entry,
             current_price=entry, unrealized_pnl=0.0, unrealized_r=0.0,
+            mfe_r=0.0, mae_r=0.0,
             config_snapshot=signal.get('config_snapshot', {}),
             **{k: v for k, v in (signal.get('extra') or {}).items()
                if k not in ('symbol', 'side', 'epoch')})
@@ -701,7 +728,11 @@ class Simulator:
         pos['current_price'] = exit_basis
         pnl = (exit_basis - pos['entry_price']) if buy else (pos['entry_price'] - exit_basis)
         pos['unrealized_pnl'] = pnl
-        pos['unrealized_r'] = (pnl / pos['risk']) if pos['risk'] else None
+        r = (pnl / pos['risk']) if pos['risk'] else None
+        pos['unrealized_r'] = r
+        if r is not None:                       # maximum favorable / adverse excursion, in R
+            pos['mfe_r'] = round(max(pos.get('mfe_r', 0.0) or 0.0, r), 4)
+            pos['mae_r'] = round(min(pos.get('mae_r', 0.0) or 0.0, r), 4)
         sl, tp = pos['initial_sl'], pos['initial_tp']
         sl_hit = (exit_basis <= sl) if buy else (exit_basis >= sl)
         tp_hit = (exit_basis >= tp) if buy else (exit_basis <= tp)
@@ -1021,13 +1052,15 @@ class LiveTestEngine:
                   'entry_price', 'initial_sl', 'initial_tp', 'entry_spread', 'exit_time', 'exit_price',
                   'exit_spread', 'exit_reason', 'duration_seconds', 'price_pnl', 'pnl_r',
                   'data_quality_status',
-                  # H4 Liquidity Sweep + FVG columns (empty for other strategies):
-                  'signal_id', 'h4_liquidity_type', 'h4_target_price', 'ltf_swing_time',
-                  'ltf_swing_level', 'sweep_time', 'sweep_extreme', 'fvg_high', 'fvg_low',
-                  'fvg_confirm_time', 'fvg_midpoint', 'fill_price']
+                  # structure columns shared across the Live Test agents (empty where N/A):
+                  'signal_id', 'config_variant', 'setup', 'h4_liquidity_type', 'h4_target_price',
+                  'ltf_swing_time', 'ltf_swing_level', 'sweep_time', 'sweep_extreme',
+                  'fvg_high', 'fvg_low', 'fvg_confirm_time', 'fvg_midpoint', 'fill_price',
+                  'ref_high', 'ref_low', 'choch_time', 'choch_level', 'target_level',
+                  'mfe_r', 'mae_r']
 
     _CSV_TIME_FIELDS = ('signal_time', 'entry_time', 'exit_time', 'ltf_swing_time',
-                        'sweep_time', 'fvg_confirm_time')
+                        'sweep_time', 'fvg_confirm_time', 'choch_time')
 
     def csv_rows(self, agent_id=None):
         rows = []
@@ -1041,10 +1074,11 @@ class LiveTestEngine:
 
     # ---- signal log (NO_FILL / cancelled / skipped setups), exportable ----
     SIGNAL_CSV_FIELDS = ['epoch', 'event', 'reason', 'detail', 'strategy_id', 'config_id', 'symbol',
-                         'side', 'signal_id', 'h4_liquidity_type', 'h4_target_price', 'selection_reason',
-                         'ltf_swing_time', 'ltf_swing_level', 'sweep_time', 'sweep_extreme',
-                         'fvg_high', 'fvg_low', 'fvg_confirm_time', 'fvg_midpoint']
-    _SIGNAL_TIME_FIELDS = ('ltf_swing_time', 'sweep_time', 'fvg_confirm_time')
+                         'side', 'signal_id', 'setup', 'h4_liquidity_type', 'h4_target_price',
+                         'selection_reason', 'ltf_swing_time', 'ltf_swing_level', 'sweep_time',
+                         'sweep_extreme', 'fvg_high', 'fvg_low', 'fvg_confirm_time', 'fvg_midpoint',
+                         'ref_high', 'ref_low', 'choch_time', 'choch_level', 'target_level']
+    _SIGNAL_TIME_FIELDS = ('ltf_swing_time', 'sweep_time', 'fvg_confirm_time', 'choch_time')
 
     def signals_csv_rows(self, agent_id=None):
         rows = []
@@ -1084,6 +1118,30 @@ def build_agent(strategy_id, config):
             return ORBAgent(config)
         except Exception:
             return None
+    if strategy_id == 'CRT_H1_M5':
+        try:
+            from live_test_crt import CrtH1M5
+            return CrtH1M5(config)
+        except Exception:
+            return None
+    if strategy_id == 'H4_SWING_SWEEP_FVG_ENGULF':
+        try:
+            from live_test_h4_swing import H4SwingSweepFVGEngulf
+            return H4SwingSweepFVGEngulf(config)
+        except Exception:
+            return None
+    if strategy_id == 'NY_SWEEP_LONDON':
+        try:
+            from live_test_ny_london import NYSweepLondon
+            return NYSweepLondon(config)
+        except Exception:
+            return None
+    if strategy_id == 'INVERSE_FVG_RETEST':
+        try:
+            from live_test_ifvg import InverseFvgRetest
+            return InverseFvgRetest(config)
+        except Exception:
+            return None
     return None
 
 
@@ -1121,22 +1179,26 @@ def ensure_default_agents(engine, cfg=None):
     on XAUUSD, its configured instrument."""
     cfg = cfg or {}
     h4_overrides = (cfg.get('h4_liq') or {}).get('symbol_overrides') or {}
+
+    def _reg(agent, base):
+        if agent is None:
+            return
+        aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
+        if aid not in engine.agents:
+            engine.register(agent, base, 'PAUSED')
+
+    # The all-symbol Live Test agents (one baseline config each; per-symbol overrides via
+    # cfg[<key>].symbol_overrides). H4 Liquidity Sweep adds its optional timeframes.
+    ALL_SYMBOL_AGENTS = ('CRT_H1_M5', 'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST')
+    _key = {'CRT_H1_M5': 'crt', 'H4_SWING_SWEEP_FVG_ENGULF': 'h4_swing',
+            'NY_SWEEP_LONDON': 'ny_london', 'INVERSE_FVG_RETEST': 'inverse_fvg'}
     for base in live_test_symbols(cfg):
         for cls in CORE_AGENTS:
-            agent = cls()
-            aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
-            if aid not in engine.agents:
-                engine.register(agent, base, 'PAUSED')
+            _reg(cls(), base)
         for tf in h4_liq_timeframes(cfg):
-            conf = {'entry_timeframe': tf, **(h4_overrides.get(base) or {})}
-            agent = build_agent('H4_LIQ_SWEEP_FVG', conf)
-            if agent is None:
-                continue
-            aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
-            if aid not in engine.agents:
-                engine.register(agent, base, 'PAUSED')
-    orb = build_agent('ORB_BREAKOUT_RETEST', cfg.get('orb') or {})
-    if orb is not None:
-        aid = f"{orb.strategy_id}|XAUUSD|{orb.config_id}"
-        if aid not in engine.agents:
-            engine.register(orb, 'XAUUSD', 'PAUSED')
+            _reg(build_agent('H4_LIQ_SWEEP_FVG', {'entry_timeframe': tf, **(h4_overrides.get(base) or {})}), base)
+        for sid in ALL_SYMBOL_AGENTS:
+            ov = (cfg.get(_key[sid]) or {}).get('symbol_overrides') or {}
+            _reg(build_agent(sid, ov.get(base) or {}), base)
+    # Gold ORB 09:30 NY is XAUUSD-only (SELL baseline).
+    _reg(build_agent('ORB_BREAKOUT_RETEST', cfg.get('orb') or {}), 'XAUUSD')

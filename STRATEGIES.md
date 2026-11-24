@@ -53,15 +53,26 @@ Each engine is self-contained: **no strategy reads another's inputs, signals or 
 
 The **Live Test** tab forward-tests strategy agents on live MT5 data with a **read-only** feed
 (`market_data.py`): every entry, SL, TP, exit and P/L is a **simulation** — no `order_send`, no
-executor. Agents: six core agents + **H4 Liquidity Sweep + FVG** (`live_test_h4_liq.py`) + optional ORB.
+executor (a guard test scans every `live_test*` source for forbidden order tokens). The simulator
+fills BUY on Ask / SELL on Bid, exits on the opposite side, computes R from fill→initial-SL, flags
+stale-feed gaps as `DATA_GAP` and tracks MFE/MAE. Agents: six **core** H1 agents + **six structure
+agents** below. Skipped / NO_FILL / cancelled setups go to an exportable **Signal Log**; closed
+trades and a **per-symbol R summary** export to CSV. Start/Pause per agent or **Start all / Pause
+all**. The tab auto-renders any registered agent, so all six appear automatically.
 
-- **H4 Liquidity Sweep + FVG** — H4 equal-highs (EQH) / equal-lows (EQL) give the direction and the
-  target (midpoint of the two swings); a lower-timeframe (**M5 baseline**, M15/M1 optional) sweep of a
-  confirmed LTF swing, then the first FVG after the sweep, then a retrace to the 50% FVG midpoint fills
-  the simulated entry (BUY on Ask / SELL on Bid). SL beyond the sweep extreme; TP at the frozen H4 target.
-  Runs on **all 12 configured symbols**. Skipped / NO_FILL / cancelled setups go to an exportable
-  **Signal Log**; closed trades and a **per-symbol R summary** export to CSV. Start/Pause per agent or
-  **Start all / Pause all**. See [PROJECT_PROMPTS.md](PROJECT_PROMPTS.md) and `test_live_test_h4_liq.py`.
+| # | Agent (`strategy_id`) | TF | Symbols | Core idea |
+|---|-----------------------|-----|---------|-----------|
+| 1 | **H4 Liquidity Sweep + FVG** (`H4_LIQ_SWEEP_FVG`) | M5 (M15/M1 opt) | all 12 | EQH/EQL target → LTF sweep → first FVG → TOUCH_50 / **RECLAIM_50** fill |
+| 2 | **CRT H1/M5** (`CRT_H1_M5`) | M5 | all 12 | prior-H1 range swept then closed back inside; enter ≤60 s after close; TP = opposite edge; 3-H1 time exit |
+| 3 | **Gold ORB 09:30 NY** (`ORB_BREAKOUT_RETEST`) | M5 | XAUUSD | SELL only; H4-bearish gate; 09:30-09:45 range; M5 break+retest; TP = nearest M15 demand; 12:00 NY exit |
+| 4 | **H4 Swing Sweep + M15 FVG + Engulfing** (`H4_SWING_SWEEP_FVG_ENGULF`) | M15 | all 12 | un-broken H4 pivot swept → M15 FVG → engulfing confirm; TP = nearest H4 swing; 4 h exit |
+| 5 | **New York Sweep London** (`NY_SWEEP_LONDON`) | M5 | all 12 | London 08-12 range; NY-session sweep of an edge + CHoCH; TP = opposite London edge; 12:00 NY exit |
+| 6 | **Inverse FVG Retest** (`INVERSE_FVG_RETEST`) | M5 | all 12 | FVG flipped by a close through the whole gap → retest fills; **SWEEP_REQUIRED** variant; TP = M15 swing; 2 h exit |
+
+All agents use closed candles for structure, a shared min-R:R gate (`RR_TOO_LOW`), per-symbol
+tick/point profiles and per agent × symbol × config state. One offline symbol never blocks the
+others. See each `live_test_*.py` module and its `test_live_test_*.py` suite, plus
+[PROJECT_PROMPTS.md](PROJECT_PROMPTS.md).
 
 ## Other project references
 

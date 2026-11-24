@@ -97,7 +97,9 @@ class ReadOnlyGuard(unittest.TestCase):
         return ' '.join(names)
 
     def test_live_test_sources_have_no_order_api(self):
-        for name in ('live_test.py', 'market_data.py'):
+        for name in ('live_test.py', 'market_data.py', 'live_test_h4_liq.py', 'live_test_crt.py',
+                     'live_test_orb.py', 'live_test_h4_swing.py', 'live_test_ny_london.py',
+                     'live_test_ifvg.py'):
             code = self._code_only(name)
             for tok in self.FORBIDDEN:
                 self.assertNotIn(tok, code, f'{name} code must not reference {tok!r} (read-only Live Test)')
@@ -564,16 +566,23 @@ class CmsRegistration(unittest.TestCase):
         ensure_default_agents(eng, {'symbols': ['XAUUSD', 'EURUSD', 'GBPJPY']})
         pairs = {la.base_symbol for la in eng.agents.values()}
         self.assertEqual(pairs, {'XAUUSD', 'EURUSD', 'GBPJPY'})
-        # six core agents + the H4 Liquidity Sweep + FVG agent on each pair
-        # (ORB is XAUUSD-only and optional).
+        # six core (H1) agents + five Live Test structure agents on each pair
+        # (ORB is XAUUSD-only). H4 Liquidity Sweep is the M5 baseline on every pair.
         for base in ('XAUUSD', 'EURUSD', 'GBPJPY'):
             core = {la.agent.strategy_id for la in eng.agents.values()
                     if la.base_symbol == base and la.agent.strategy_id
-                    not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG')}
+                    not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG', 'CRT_H1_M5',
+                            'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST')}
             self.assertEqual(len(core), 6)
-            h4 = [la for la in eng.agents.values()
-                  if la.base_symbol == base and la.agent.strategy_id == 'H4_LIQ_SWEEP_FVG']
-            self.assertEqual(len(h4), 1)   # M5 baseline agent registered on every pair
+            per_pair = {la.agent.strategy_id for la in eng.agents.values()
+                        if la.base_symbol == base}
+            for sid in ('H4_LIQ_SWEEP_FVG', 'CRT_H1_M5', 'H4_SWING_SWEEP_FVG_ENGULF',
+                        'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST'):
+                self.assertIn(sid, per_pair)
+        # ORB only on XAUUSD
+        orb_bases = {la.base_symbol for la in eng.agents.values()
+                     if la.agent.strategy_id == 'ORB_BREAKOUT_RETEST'}
+        self.assertEqual(orb_bases, {'XAUUSD'})
 
 
 class AtrSizing(unittest.TestCase):

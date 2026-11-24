@@ -102,12 +102,17 @@ function renderLiveTest() {
 const LT_CSV = ['trade_id', 'strategy_id', 'strategy_version', 'config_id', 'symbol', 'timeframe', 'session', 'side',
  'signal_reason', 'signal_time', 'trigger_price', 'entry_time', 'entry_price', 'initial_sl', 'initial_tp',
  'entry_spread', 'exit_time', 'exit_price', 'exit_spread', 'exit_reason', 'duration_seconds', 'price_pnl',
- 'pnl_r', 'data_quality_status'];
+ 'pnl_r', 'data_quality_status',
+ // structure columns shared across the Live Test agents (empty where N/A):
+ 'signal_id', 'config_variant', 'setup', 'h4_liquidity_type', 'h4_target_price', 'ltf_swing_time',
+ 'ltf_swing_level', 'sweep_time', 'sweep_extreme', 'fvg_high', 'fvg_low', 'fvg_confirm_time', 'fvg_midpoint',
+ 'fill_price', 'ref_high', 'ref_low', 'choch_time', 'choch_level', 'target_level', 'mfe_r', 'mae_r'];
+const LT_CSV_TIME = ['signal_time', 'entry_time', 'exit_time', 'ltf_swing_time', 'sweep_time', 'fvg_confirm_time', 'choch_time'];
 function ltIso(e) { return e == null || e === '' ? '' : new Date(e * 1000).toISOString().replace(/\.\d+Z$/, 'Z'); }
 function ltCsvDownload(rows, name) {
  const q = v => '"' + String(v ?? '').replaceAll('"', '""') + '"';
  const line = t => LT_CSV.map(k => {
-  let v = t[k]; if (['signal_time', 'entry_time', 'exit_time'].includes(k)) v = ltIso(v);
+  let v = t[k]; if (LT_CSV_TIME.includes(k)) v = ltIso(v);
   v = String(v ?? '').replace(/^([=+@-])/, "'$1"); return q(v);
  }).join(',');
  const csv = [LT_CSV.join(','), ...rows.map(line)].join('\r\n');

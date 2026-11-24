@@ -54,8 +54,10 @@ class H4LiquiditySweepFVG:
         sl_buffer_points=None, sl_buffer_atr=0.20,         # SL beyond the sweep extreme
         min_sl_atr=0.20, max_sl_atr=8.0,                   # risk sanity (LTF ATR based)
         min_sl_points=None, max_sl_points=None,
+        min_rr=1.0,                      # reject if TP is nearer than 1R from the fill
+        entry_model='TOUCH_50',          # TOUCH_50 (tick to midpoint) | RECLAIM_50 (wick+close back)
         max_sweep_to_fvg_bars=6,         # LTF bars sweep-close -> FVG complete
-        max_fvg_to_entry_bars=12,        # LTF bars FVG-confirm -> fill
+        max_fvg_to_entry_bars=6,         # LTF bars FVG-confirm -> fill (spec: up to 6 more M5)
         max_gap_seconds=120, max_positions=1)
 
     def __init__(self, config: dict | None = None):
@@ -64,7 +66,8 @@ class H4LiquiditySweepFVG:
         self.timeframe = self.config['entry_timeframe']   # engine fetches LTF candles with this
 
     def label(self):
-        return f"H4 Liquidity Sweep + FVG ({self.timeframe})"
+        model = self.config.get('entry_model', 'TOUCH_50')
+        return f"H4 Liquidity Sweep + FVG ({self.timeframe} · {model})"
 
     # ---- helpers -----------------------------------------------------------
     def _emit(self, state, event, **kw):
@@ -247,17 +250,30 @@ class H4LiquiditySweepFVG:
 
         # ============================ FVG: wait for retrace fill ==============
         midpoint = pend['fvg_midpoint']
+        model = c.get('entry_model', 'TOUCH_50')
         if target_touched:                       # price ran to target without a retest
             cancel('NO_FILL', 'TARGET_HIT_NO_RETEST')
             return None
         if new_candle:
             state['last_candle_time'] = candles[-1].time
             if self._bars_after(candles, pend['fvg_confirm_time']) > c['max_fvg_to_entry_bars']:
-                cancel('NO_FILL', 'WINDOW_EXPIRED')
+                # RECLAIM_50 logs that the confirmation never happened within the window.
+                cancel('NO_FILL', 'WINDOW_EXPIRED' if model == 'TOUCH_50' else 'RECLAIM_NOT_CONFIRMED')
                 return None
+            if model == 'RECLAIM_50':            # a CLOSED candle must wick the midpoint and close back
+                lc = candles[-1]
+                reclaimed = (lc.low <= midpoint < lc.close) if side == 'BUY' \
+                    else (lc.high >= midpoint > lc.close)
+                if reclaimed:
+                    pend['reclaimed'] = True
+                    state['pending'] = pend
 
-        # Fill on the tradeable side: BUY on Ask <= midpoint, SELL on Bid >= midpoint.
-        filled = (quote.ask <= midpoint) if side == 'BUY' else (quote.bid >= midpoint)
+        if model == 'RECLAIM_50':
+            if not pend.get('reclaimed'):
+                return None
+            filled = True                        # confirmed by the closed reclaim candle
+        else:                                    # TOUCH_50: BUY on Ask <= midpoint, SELL on Bid >= midpoint
+            filled = (quote.ask <= midpoint) if side == 'BUY' else (quote.bid >= midpoint)
         if not filled:
             return None
         entry = quote.ask if side == 'BUY' else quote.bid
@@ -281,11 +297,17 @@ class H4LiquiditySweepFVG:
         if side == 'SELL' and not (tp < entry < sl):
             cancel('NO_FILL', 'INVALID_LEVELS')
             return None
+        reward = abs(tp - entry)
+        if risk > 0 and (reward / risk) < c.get('min_rr', 1.0):     # target too close
+            cancel('NO_FILL', 'RR_TOO_LOW')
+            return None
 
         extra = self._log_fields(pend, symbol, now)
         extra['fill_price'] = round(entry, quote.digits)
+        extra['config_variant'] = f"{self.timeframe}/{model}"
+        extra['target_level'] = pend['target_price']
         state['pending'] = None
-        return dict(side=side, signal_reason=f"{pend['liq_type']} sweep+FVG -> {side}",
+        return dict(side=side, signal_reason=f"{pend['liq_type']} sweep+FVG {model} -> {side}",
                     signal_time=pend['sweep_time'], trigger_price=midpoint,
                     initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits),
                     session=None, timeframe=self.timeframe, entry_candle_end=None,
@@ -296,6 +318,7 @@ class H4LiquiditySweepFVG:
         """The setup fields carried onto the position (and CSV) or the signal-log record."""
         return dict(
             signal_id=pend['signal_id'], symbol=symbol, side=pend['side'], epoch=now,
+            setup=pend.get('liq_type'), target_level=pend.get('target_price'),
             h4_liquidity_type=pend['liq_type'], h4_target_price=pend['target_price'],
             selection_reason=pend.get('selection_reason'),
             ltf_swing_time=pend.get('ltf_swing_time'), ltf_swing_level=pend.get('ltf_swing_level'),

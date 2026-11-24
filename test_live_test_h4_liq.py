@@ -255,6 +255,32 @@ class DirectAgent(unittest.TestCase):
         sig = a.evaluate(NOW + 5, q(2001.3, 2001.5), bars[:11], POINT, st, market=mkt, symbol='XAUUSD')
         self.assertIsNotNone(sig)
 
+    def test_reclaim_50_waits_for_closed_reclaim_candle(self):
+        # RECLAIM_50: a tick at the midpoint must NOT fill; only a CLOSED candle that wicks the
+        # midpoint and closes back above it triggers the entry (filled on the quote after close).
+        a = self._agent({'entry_model': 'RECLAIM_50'})
+        mkt = FakeH4Market(h4_eqh())
+        bars = m5_buy()
+        st = {}
+        a.evaluate(NOW, q(2000.0, 2000.2), bars[:7], POINT, st, market=mkt, symbol='XAUUSD')
+        a.evaluate(NOW + 1, q(1999.4, 1999.6), bars[:8], POINT, st, market=mkt, symbol='XAUUSD')
+        a.evaluate(NOW + 2, q(2002.4, 2002.6), bars[:10], POINT, st, market=mkt, symbol='XAUUSD')
+        a.evaluate(NOW + 3, q(2002.9, 2003.1), bars[:11], POINT, st, market=mkt, symbol='XAUUSD')
+        self.assertEqual(st['pending']['phase'], 'FVG')          # midpoint 2001.5
+        # a mere tick to the midpoint does NOT fill under RECLAIM_50
+        self.assertIsNone(a.evaluate(NOW + 4, q(2001.4, 2001.5), bars[:11], POINT, st, market=mkt, symbol='XAUUSD'))
+        self.assertEqual(st['pending']['phase'], 'FVG')
+        # a CLOSED candle that wicks below the midpoint and closes back above -> confirmed reclaim
+        reclaim = bars[:11] + [Bar(int(NOW) + 11 * M5_DUR, 2002.0, 2002.5, 2001.0, 2002.0)]
+        sig = a.evaluate(NOW + 5, q(2001.9, 2002.1), reclaim, POINT, st, market=mkt, symbol='XAUUSD')
+        self.assertIsNotNone(sig)
+        self.assertEqual(sig['side'], 'BUY')
+        self.assertAlmostEqual(sig['extra']['fill_price'], 2002.1)   # filled on the Ask after close
+        self.assertEqual(sig['extra']['setup'], 'EQH')
+        self.assertIn('RECLAIM_50', sig['signal_reason'])
+        self.assertAlmostEqual(sig['initial_sl'], 1996.8)
+        self.assertAlmostEqual(sig['initial_tp'], 2010.0)
+
     def test_signal_id_stable_for_same_setup(self):
         a = self._agent()
         one = a._signal_id('XAUUSD', 'EQH', 2010.004, 1700000000, DIGITS)
