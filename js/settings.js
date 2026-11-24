@@ -11,7 +11,7 @@ function controlChanges(cur,next){
  const ol=cur.pair_lots||{},nl=next.pair_lots||{};
  for(const sym of [...new Set([...Object.keys(ol),...Object.keys(nl)])].sort())if(Number(ol[sym])!==Number(nl[sym])&&!(ol[sym]==null&&nl[sym]==null))out.push(`• ${sym} fixed lot: ${ol[sym]??'auto'} → ${nl[sym]??'auto'}`);
  const ow=cur.trade_windows||{},nw=next.trade_windows||{};
- for(const s of ['BBMA','CONFLUENCE','ORB']){const a=ow[s]||{},b=nw[s]||{},as=a.enabled?`${a.start}–${a.end}`:'OFF',bs=b.enabled?`${b.start}–${b.end}`:'OFF';if(as!==bs)out.push(`• ${s} trade window (MT5 server): ${as} → ${bs}`);}
+ for(const s of ['BBMA','CONFLUENCE','ORB']){const a=ow[s]||{},b=nw[s]||{},as=a.enabled?`${twServerToLocal(a.start)}–${twServerToLocal(a.end)}`:'OFF',bs=b.enabled?`${twServerToLocal(b.start)}–${twServerToLocal(b.end)}`:'OFF';if(as!==bs)out.push(`• ${s} trade window (your PC time): ${as} → ${bs}`);}
  return out;
 }
 document.querySelector('.settings-nav')?.addEventListener('click',e=>{const b=e.target.closest('[data-jump]');if(b)$(b.dataset.jump)?.scrollIntoView({block:'start'});});
@@ -74,14 +74,25 @@ function renderControls(s){
  renderTradeWindows(c);
 }
 const WINDOW_STRATEGIES=['BBMA','CONFLUENCE','ORB'];
+// Trade windows are STORED and ENFORCED in MT5 server (broker) time; the UI shows the
+// viewer's local PC time. Conversion only: the bot's enforcement is unchanged.
+// delta = minutes to ADD to a server time to get local PC time.
+function twDelta(){const broker=(data?.meta?.tick_offset||0)*60;const pc=-new Date().getTimezoneOffset();return pc-broker;}
+function twHhmmToMin(t){const p=String(t||'00:00').split(':');return(((Number(p[0])||0)*60+(Number(p[1])||0))%1440+1440)%1440;}
+function twMinToHhmm(m){m=((m%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');}
+const twServerToLocal=t=>twMinToHhmm(twHhmmToMin(t)+twDelta());
+const twLocalToServer=t=>twMinToHhmm(twHhmmToMin(t)-twDelta());
+function twZoneLabel(){const d=twDelta(),sign=d<0?'-':'+',a=Math.abs(d);const bh=data?.meta?.tick_offset||0;
+ return ` (broker is UTC${bh>=0?'+':''}${bh}; your PC is ${a?sign+Math.floor(a/60)+'h'+(a%60?String(a%60).padStart(2,'0'):''):'the same'} ${d<0?'behind':d>0?'ahead':''} — times are stored in broker time)`;}
 function renderTradeWindows(c){
  const target=$('trade-windows');if(!target)return;
  const w=c.trade_windows||{};
+ const note=$('tw-zone-note');if(note)note.textContent=twZoneLabel();
  target.innerHTML=WINDOW_STRATEGIES.map(s=>{const x=w[s]||{enabled:false,start:'00:00',end:'00:00'};
-  return `<div class="trade-window-row"><label class="tw-strategy"><input type="checkbox" data-tw-enabled="${s}" ${x.enabled?'checked':''} ${demo?'disabled':''}> <b>${s}</b></label><label>From<input type="time" data-tw-start="${s}" value="${esc(x.start||'00:00')}" ${demo?'disabled':''}></label><label>To<input type="time" data-tw-end="${s}" value="${esc(x.end||'00:00')}" ${demo?'disabled':''}></label></div>`;}).join('');
+  return `<div class="trade-window-row"><label class="tw-strategy"><input type="checkbox" data-tw-enabled="${s}" ${x.enabled?'checked':''} ${demo?'disabled':''}> <b>${s}</b></label><label>From<input type="time" data-tw-start="${s}" value="${esc(twServerToLocal(x.start||'00:00'))}" ${demo?'disabled':''}></label><label>To<input type="time" data-tw-end="${s}" value="${esc(twServerToLocal(x.end||'00:00'))}" ${demo?'disabled':''}></label></div>`;}).join('');
 }
 function readTradeWindows(){
- return Object.fromEntries(WINDOW_STRATEGIES.map(s=>[s,{enabled:document.querySelector(`[data-tw-enabled="${s}"]`)?.checked||false,start:document.querySelector(`[data-tw-start="${s}"]`)?.value||'00:00',end:document.querySelector(`[data-tw-end="${s}"]`)?.value||'00:00'}]));
+ return Object.fromEntries(WINDOW_STRATEGIES.map(s=>[s,{enabled:document.querySelector(`[data-tw-enabled="${s}"]`)?.checked||false,start:twLocalToServer(document.querySelector(`[data-tw-start="${s}"]`)?.value||'00:00'),end:twLocalToServer(document.querySelector(`[data-tw-end="${s}"]`)?.value||'00:00')}]));
 }
 function renderNews(s){
  const n=s.meta.news_filter,health=$('news-health'),body=$('news-events');
