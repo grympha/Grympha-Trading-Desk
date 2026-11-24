@@ -44,7 +44,27 @@ function renderLiveTest() {
  if ($('lt-note')) $('lt-note').textContent = r.error
   ? ('Live Test unavailable: ' + r.error)
   : 'All entries, positions, exits and P/L here are simulated on live MT5 market data. Read-only feed; no orders are sent to MT5.';
- const agents = r.agents || [];
+ // Sort agents by win rate (highest first); agents with no closed trades sink to the bottom,
+ // tie-broken by Net R then valid-trade count.
+ const nr = a => (a.stats || {}).net_r || 0, vt = a => (a.stats || {}).valid_trades || 0;
+ const agents = (r.agents || []).slice().sort((a, b) => {
+  const wa = (a.stats || {}).win_rate, wb = (b.stats || {}).win_rate;
+  if (wa == null && wb == null) return nr(b) - nr(a) || vt(b) - vt(a);
+  if (wa == null) return 1;
+  if (wb == null) return -1;
+  return (wb - wa) || (nr(b) - nr(a)) || (vt(b) - vt(a));
+ });
+ // Best candidate = highest-win-rate agent that has at least one closed trade.
+ if ($('lt-best')) {
+  const best = agents.find(a => vt(a) > 0 && (a.stats || {}).win_rate != null);
+  if (best) {
+   const s = best.stats, net = nr(best);
+   $('lt-best').textContent = `Best: ${best.label || best.strategy_id} · ${best.symbol} — `
+    + `${(100 * s.win_rate).toFixed(1)}% win · ${net >= 0 ? '+' : ''}${net}R · ${vt(best)} trade${vt(best) === 1 ? '' : 's'}`;
+  } else {
+   $('lt-best').textContent = 'No candidate yet — no closed trades.';
+  }
+ }
  setHTML('lt-agents', agents.length ? agents.map(a => {
   const running = a.status === 'RUNNING', s = a.stats || {};
   const wr = s.win_rate == null ? '—' : (100 * s.win_rate).toFixed(1) + '%';

@@ -32,6 +32,11 @@ ctx.fixture = {
    current_price: 2001, initial_sl: 1997.5, initial_tp: 2006.7, unrealized_pnl: 0.3, unrealized_r: 0.1,
    age_seconds: 120, data_quality_status: 'OK'
   }]
+ }, {
+  id: 'CMS_SR_FLIP|XAUUSD|def', strategy_id: 'CMS_SR_FLIP',
+  label: 'CMS Support/Resistance Flip', symbol: 'XAUUSD', config_id: 'def', strategy_version: 'cms_sr_flip@1',
+  status: 'RUNNING', feed_status: 'LIVE', last_tick_myt: '2024-01-01 09:00:00 MYT',
+  last_signal: null, stats: { valid_trades: 1, win_rate: 1.0, net_r: 2, affected_by_data: 0 }, open_positions: []
  }],
  recent_trades: [{
   trade_id: 't1', strategy_id: 'PREV_CANDLE_BREAKOUT_H1', symbol: 'XAUUSD', side: 'BUY',
@@ -49,6 +54,12 @@ vm.runInContext('liveTestData = fixture; renderLiveTest();', ctx);
 assert.ok($('lt-agents').innerHTML.includes('Previous Candle Breakout H1'));
 assert.ok($('lt-agents').innerHTML.includes('Pause agent'));
 assert.ok($('lt-agents').innerHTML.includes('&lt;x&gt;'), 'signal reason must be HTML-escaped');
+// agents sorted by win rate: the 100% agent renders before the 50% agent
+assert.ok($('lt-agents').innerHTML.indexOf('CMS Support/Resistance Flip') < $('lt-agents').innerHTML.indexOf('Previous Candle Breakout H1'), 'agents sorted highest win rate first');
+// best-candidate summary names the top agent, its pair and win rate
+assert.ok($('lt-best').textContent.includes('CMS Support/Resistance Flip') && $('lt-best').textContent.includes('XAUUSD') && $('lt-best').textContent.includes('100.0%'), 'best-candidate summary');
+// Strategy agents section is collapsible and starts minimized (no open attribute)
+assert.ok(/<details id="lt-agents-wrap"(?![^>]*\bopen\b)/.test(html), 'Strategy agents start collapsed');
 // open position + trade rows render
 assert.ok($('lt-positions').innerHTML.includes('XAUUSD'));
 assert.ok($('lt-trades').innerHTML.includes('TP'));
@@ -71,7 +82,8 @@ assert.ok($('lt-note').innerHTML.includes('boom') || $('lt-note').textContent.in
 // HTML wiring: each id present exactly once
 for (const id of ['tab-livetest', 'panel-livetest', 'lt-agents', 'lt-positions', 'lt-positions-pager',
  'lt-trades', 'lt-trades-pager', 'lt-csv-all', 'lt-csv-filtered', 'lt-filter-strategy', 'lt-filter-status',
- 'lt-start-all', 'lt-pause-all', 'lt-symbols', 'lt-signals', 'lt-signals-pager', 'lt-signals-csv']) {
+ 'lt-start-all', 'lt-pause-all', 'lt-symbols', 'lt-signals', 'lt-signals-pager', 'lt-signals-csv',
+ 'lt-agents-wrap', 'lt-best']) {
  assert.equal((html.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'missing/duplicate id ' + id);
 }
 // Live Test is wired into the page tabs
