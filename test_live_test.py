@@ -564,11 +564,16 @@ class CmsRegistration(unittest.TestCase):
         ensure_default_agents(eng, {'symbols': ['XAUUSD', 'EURUSD', 'GBPJPY']})
         pairs = {la.base_symbol for la in eng.agents.values()}
         self.assertEqual(pairs, {'XAUUSD', 'EURUSD', 'GBPJPY'})
-        # six core agents registered on each pair (ORB is XAUUSD-only and optional)
+        # six core agents + the H4 Liquidity Sweep + FVG agent on each pair
+        # (ORB is XAUUSD-only and optional).
         for base in ('XAUUSD', 'EURUSD', 'GBPJPY'):
             core = {la.agent.strategy_id for la in eng.agents.values()
-                    if la.base_symbol == base and la.agent.strategy_id != 'ORB_BREAKOUT_RETEST'}
+                    if la.base_symbol == base and la.agent.strategy_id
+                    not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG')}
             self.assertEqual(len(core), 6)
+            h4 = [la for la in eng.agents.values()
+                  if la.base_symbol == base and la.agent.strategy_id == 'H4_LIQ_SWEEP_FVG']
+            self.assertEqual(len(h4), 1)   # M5 baseline agent registered on every pair
 
 
 class AtrSizing(unittest.TestCase):

@@ -670,7 +670,9 @@ class Simulator:
             entry_candle_end=signal.get('entry_candle_end'), status='OPEN',
             data_quality_status=VALID, last_sample_epoch=now, last_price=entry,
             current_price=entry, unrealized_pnl=0.0, unrealized_r=0.0,
-            config_snapshot=signal.get('config_snapshot', {}))
+            config_snapshot=signal.get('config_snapshot', {}),
+            **{k: v for k, v in (signal.get('extra') or {}).items()
+               if k not in ('symbol', 'side', 'epoch')})
 
     @staticmethod
     def _close(pos, now, exit_price, exit_spread, reason, quality):
@@ -756,6 +758,9 @@ CREATE TABLE IF NOT EXISTS live_test_positions(
 CREATE TABLE IF NOT EXISTS live_test_trades(
  trade_id TEXT PRIMARY KEY, agent_id TEXT, closed_epoch REAL, payload TEXT);
 CREATE INDEX IF NOT EXISTS live_test_trade_closed ON live_test_trades(closed_epoch DESC);
+CREATE TABLE IF NOT EXISTS live_test_signals(
+ id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT, signal_id TEXT, epoch REAL, payload TEXT);
+CREATE INDEX IF NOT EXISTS live_test_signal_epoch ON live_test_signals(epoch DESC);
 '''
 
 
@@ -808,6 +813,31 @@ class LiveTestEngine:
                 db.execute('INSERT OR REPLACE INTO live_test_positions VALUES (?,?,?,?,?)',
                            (pos['trade_id'], pos['agent_id'], pos['status'],
                             json.dumps(pos, allow_nan=False), time.time()))
+
+    def _drain_signal_log(self, la, symbol, now):
+        """Persist NO_FILL / cancellation / skip records the agent appended to its state.
+        These never become positions but are kept, exportable, in the signal log."""
+        events = la.state.pop('_emit', None)
+        if not events:
+            return
+        with self.store.connect() as db:
+            for ev in events:
+                rec = dict(ev, agent_id=la.id, strategy_id=la.agent.strategy_id,
+                           config_id=la.agent.config_id, base_symbol=la.base_symbol)
+                rec.setdefault('symbol', symbol)
+                rec.setdefault('epoch', now)
+                db.execute('INSERT INTO live_test_signals(agent_id,signal_id,epoch,payload) VALUES (?,?,?,?)',
+                           (la.id, rec.get('signal_id'), rec['epoch'], json.dumps(rec, allow_nan=False)))
+
+    def signals(self, agent_id=None, limit=None):
+        with self.store.connect() as db:
+            if agent_id:
+                rows = db.execute('SELECT payload FROM live_test_signals WHERE agent_id=? ORDER BY epoch DESC',
+                                  (agent_id,)).fetchall()
+            else:
+                rows = db.execute('SELECT payload FROM live_test_signals ORDER BY epoch DESC').fetchall()
+        out = [json.loads(r['payload']) for r in rows]
+        return out[:limit] if limit else out
 
     def _load(self):
         with self.store.connect() as db:
@@ -900,10 +930,14 @@ class LiveTestEngine:
         if fresh and len(la.open_positions) < cfg.get('max_positions', 1):
             try:
                 candles = market.candles(symbol, la.agent.timeframe, 50, now=now)
-                signal = la.agent.evaluate(now, q, candles, q.point, la.state)
+                if getattr(la.agent, 'needs_market', False):
+                    signal = la.agent.evaluate(now, q, candles, q.point, la.state, market=market, symbol=symbol)
+                else:
+                    signal = la.agent.evaluate(now, q, candles, q.point, la.state)
             except Exception as exc:
                 signal = None
                 la.state['_eval_note'] = str(exc)
+            self._drain_signal_log(la, symbol, now)
             if signal:
                 pos = Simulator.open(la, signal, q, now)
                 la.open_positions.append(pos)
@@ -938,10 +972,43 @@ class LiveTestEngine:
         recent = []
         for t in self.trades(limit=1000):
             recent.append(dict(t, closed_myt=myt_iso(t.get('exit_time')), entry_myt=myt_iso(t.get('entry_time'))))
+        recent_signals = []
+        for s in self.signals(limit=1000):
+            recent_signals.append(dict(s, epoch_myt=myt_iso(s.get('epoch'))))
         return dict(status='OK', server_epoch=now, simulation=True,
                     note='All entries, positions, exits and P/L are SIMULATED on live market data. '
                          'Read-only feed; no orders are sent to MT5.',
-                    agents=agents, recent_trades=recent)
+                    agents=agents, recent_trades=recent, recent_signals=recent_signals,
+                    by_symbol=self._by_symbol())
+
+    def _by_symbol(self):
+        """Per-symbol performance roll-up (R-based, comparable across instruments)."""
+        acc = {}
+
+        def row(sym):
+            return acc.setdefault(sym, dict(symbol=sym, agents=0, running=0, feed='—',
+                                            signals=0, no_fill=0, closed=0, valid=0, wins=0,
+                                            net_r=0.0, data_gap=0, win_rate=None))
+        for la in self.agents.values():
+            d = row(la.base_symbol)
+            d['agents'] += 1
+            if la.status == 'RUNNING':
+                d['running'] += 1
+                d['feed'] = la.feed_status
+            st = compute_stats(self.trades(la.id))
+            d['closed'] += st['total_trades']; d['valid'] += st['valid_trades']
+            d['wins'] += st['wins']; d['net_r'] += st['net_r']; d['data_gap'] += st['affected_by_data']
+        for s in self.signals():
+            d = acc.get(s.get('base_symbol') or s.get('symbol'))
+            if not d:
+                continue
+            d['signals'] += 1
+            if s.get('event') == 'NO_FILL':
+                d['no_fill'] += 1
+        for d in acc.values():
+            d['net_r'] = round(d['net_r'], 4)
+            d['win_rate'] = (d['wins'] / d['valid']) if d['valid'] else None
+        return sorted(acc.values(), key=lambda r: r['symbol'])
 
     @staticmethod
     def _public_pos(p, now):
@@ -953,15 +1020,41 @@ class LiveTestEngine:
                   'session', 'side', 'signal_reason', 'signal_time', 'trigger_price', 'entry_time',
                   'entry_price', 'initial_sl', 'initial_tp', 'entry_spread', 'exit_time', 'exit_price',
                   'exit_spread', 'exit_reason', 'duration_seconds', 'price_pnl', 'pnl_r',
-                  'data_quality_status']
+                  'data_quality_status',
+                  # H4 Liquidity Sweep + FVG columns (empty for other strategies):
+                  'signal_id', 'h4_liquidity_type', 'h4_target_price', 'ltf_swing_time',
+                  'ltf_swing_level', 'sweep_time', 'sweep_extreme', 'fvg_high', 'fvg_low',
+                  'fvg_confirm_time', 'fvg_midpoint', 'fill_price']
+
+    _CSV_TIME_FIELDS = ('signal_time', 'entry_time', 'exit_time', 'ltf_swing_time',
+                        'sweep_time', 'fvg_confirm_time')
 
     def csv_rows(self, agent_id=None):
         rows = []
         for t in self.trades(agent_id):
             r = dict(t)
-            for k in ('signal_time', 'entry_time', 'exit_time'):
-                r[k] = iso_utc(r.get(k))
+            for k in self._CSV_TIME_FIELDS:
+                if r.get(k) is not None:
+                    r[k] = iso_utc(r.get(k))
             rows.append({k: r.get(k, '') for k in self.CSV_FIELDS})
+        return rows
+
+    # ---- signal log (NO_FILL / cancelled / skipped setups), exportable ----
+    SIGNAL_CSV_FIELDS = ['epoch', 'event', 'reason', 'detail', 'strategy_id', 'config_id', 'symbol',
+                         'side', 'signal_id', 'h4_liquidity_type', 'h4_target_price', 'selection_reason',
+                         'ltf_swing_time', 'ltf_swing_level', 'sweep_time', 'sweep_extreme',
+                         'fvg_high', 'fvg_low', 'fvg_confirm_time', 'fvg_midpoint']
+    _SIGNAL_TIME_FIELDS = ('ltf_swing_time', 'sweep_time', 'fvg_confirm_time')
+
+    def signals_csv_rows(self, agent_id=None):
+        rows = []
+        for s in self.signals(agent_id):
+            r = dict(s)
+            r['epoch'] = iso_utc(r.get('epoch'))
+            for k in self._SIGNAL_TIME_FIELDS:
+                if r.get(k) is not None:
+                    r[k] = iso_utc(r.get(k))
+            rows.append({k: r.get(k, '') for k in self.SIGNAL_CSV_FIELDS})
         return rows
 
 
@@ -979,6 +1072,12 @@ def build_agent(strategy_id, config):
         return CmsSupplyDemand(config)
     if strategy_id == CmsSsr.strategy_id:
         return CmsSsr(config)
+    if strategy_id == 'H4_LIQ_SWEEP_FVG':
+        try:
+            from live_test_h4_liq import H4LiquiditySweepFVG
+            return H4LiquiditySweepFVG(config)
+        except Exception:
+            return None
     if strategy_id == 'ORB_BREAKOUT_RETEST':
         try:
             from live_test_orb import ORBAgent
@@ -1004,13 +1103,35 @@ def live_test_symbols(cfg):
     return out
 
 
+def h4_liq_timeframes(cfg):
+    """Entry timeframes to register the H4 Liquidity Sweep + FVG agent on. Baseline is M5 for
+    every symbol; config `h4_liq.timeframes` can add M15 and/or M1 as separate agents."""
+    tfs = ((cfg or {}).get('h4_liq') or {}).get('timeframes') or ['M5']
+    out = []
+    for tf in tfs:
+        if tf in ('M1', 'M5', 'M15') and tf not in out:
+            out.append(tf)
+    return out or ['M5']
+
+
 def ensure_default_agents(engine, cfg=None):
-    """Register the starting agents (paused) if not already present. The six core agents run on
-    every configured pair; ORB (if available) stays on XAUUSD, its configured instrument."""
+    """Register the starting agents (paused) if not already present. The core agents run on
+    every configured pair. The H4 Liquidity Sweep + FVG agent runs on every pair too, at the
+    M5 baseline (plus any extra timeframes in cfg.h4_liq.timeframes). ORB (if available) stays
+    on XAUUSD, its configured instrument."""
     cfg = cfg or {}
+    h4_overrides = (cfg.get('h4_liq') or {}).get('symbol_overrides') or {}
     for base in live_test_symbols(cfg):
         for cls in CORE_AGENTS:
             agent = cls()
+            aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
+            if aid not in engine.agents:
+                engine.register(agent, base, 'PAUSED')
+        for tf in h4_liq_timeframes(cfg):
+            conf = {'entry_timeframe': tf, **(h4_overrides.get(base) or {})}
+            agent = build_agent('H4_LIQ_SWEEP_FVG', conf)
+            if agent is None:
+                continue
             aid = f"{agent.strategy_id}|{base}|{agent.config_id}"
             if aid not in engine.agents:
                 engine.register(agent, base, 'PAUSED')

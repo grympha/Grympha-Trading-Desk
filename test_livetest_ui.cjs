@@ -37,7 +37,11 @@ ctx.fixture = {
   trade_id: 't1', strategy_id: 'PREV_CANDLE_BREAKOUT_H1', symbol: 'XAUUSD', side: 'BUY',
   entry_price: 2000.7, exit_price: 2006.7, exit_reason: 'TP', price_pnl: 6, pnl_r: 1.87,
   data_quality_status: 'OK', closed_myt: '2024-01-01 10:00:00 MYT'
- }]
+ }],
+ by_symbol: [{ symbol: 'XAUUSD', agents: 7, running: 2, feed: 'LIVE', signals: 4, no_fill: 1,
+  closed: 3, win_rate: 0.5, net_r: 1.2, data_gap: 1 }],
+ recent_signals: [{ epoch_myt: '2024-01-01 09:30:00 MYT', strategy_id: 'H4_LIQ_SWEEP_FVG',
+  symbol: 'XAUUSD', side: 'BUY', event: 'NO_FILL', reason: 'TARGET_HIT_NO_RETEST', h4_target_price: 2010 }]
 };
 vm.runInContext('liveTestData = fixture; renderLiveTest();', ctx);
 
@@ -49,6 +53,11 @@ assert.ok($('lt-agents').innerHTML.includes('&lt;x&gt;'), 'signal reason must be
 assert.ok($('lt-positions').innerHTML.includes('XAUUSD'));
 assert.ok($('lt-trades').innerHTML.includes('TP'));
 assert.ok($('lt-trades').innerHTML.includes('1.87R'));
+// per-symbol summary + signal log render
+assert.ok($('lt-symbols').innerHTML.includes('XAUUSD'), 'per-symbol summary renders');
+assert.ok($('lt-symbols').innerHTML.includes('50.0%'), 'win rate in per-symbol summary');
+assert.ok($('lt-signals').innerHTML.includes('NO_FILL'), 'signal log renders NO_FILL');
+assert.ok($('lt-signals').innerHTML.includes('TARGET_HIT_NO_RETEST'), 'signal log reason renders');
 
 // empty state
 vm.runInContext('liveTestData = {agents:[],recent_trades:[]}; renderLiveTest();', ctx);
@@ -61,7 +70,8 @@ assert.ok($('lt-note').innerHTML.includes('boom') || $('lt-note').textContent.in
 
 // HTML wiring: each id present exactly once
 for (const id of ['tab-livetest', 'panel-livetest', 'lt-agents', 'lt-positions', 'lt-positions-pager',
- 'lt-trades', 'lt-trades-pager', 'lt-csv-all', 'lt-csv-filtered', 'lt-filter-strategy', 'lt-filter-status']) {
+ 'lt-trades', 'lt-trades-pager', 'lt-csv-all', 'lt-csv-filtered', 'lt-filter-strategy', 'lt-filter-status',
+ 'lt-start-all', 'lt-pause-all', 'lt-symbols', 'lt-signals', 'lt-signals-pager', 'lt-signals-csv']) {
  assert.equal((html.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, 'missing/duplicate id ' + id);
 }
 // Live Test is wired into the page tabs

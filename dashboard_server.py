@@ -111,6 +111,12 @@ def build_server(store, port=8765):
                         agent=build_agent(body.get('strategy_id'),body.get('config') or {})
                         if agent is None:raise ValueError('Unknown or unavailable strategy')
                         eng.register(agent,str(body.get('symbol') or 'XAUUSD'),'PAUSED')
+                    elif action in ('start_all','pause_all'):
+                        want='RUNNING' if action=='start_all' else 'PAUSED'
+                        only=body.get('strategy_id')
+                        for aid,la in list(eng.agents.items()):
+                            if only and la.agent.strategy_id!=only:continue
+                            eng.set_status(aid,want)
                     else:raise ValueError('Unknown action')
                     return self.send(b'{"ok":true}','application/json')
                 if self.path=='/api/bbma-tp-mode':
@@ -160,6 +166,14 @@ def build_server(store, port=8765):
                 for r in rows:
                     w.writerow({k:("'"+str(r.get(k,'')) if str(r.get(k,'')).startswith(('=','+','-','@')) else r.get(k,'')) for k in LiveTestEngine.CSV_FIELDS})
                 return self.send(buf.getvalue().encode('utf-8-sig'),'text/csv; charset=utf-8',attachment='live_test_trades.csv')
+            if path=='/api/live-test-signals.csv':
+                from live_test import LiveTestEngine
+                agent=parse_qs(urlsplit(self.path).query).get('agent',[None])[0]
+                eng=LiveTestEngine(store);rows=eng.signals_csv_rows(agent)
+                buf=io.StringIO(newline='');w=csv.DictWriter(buf,fieldnames=LiveTestEngine.SIGNAL_CSV_FIELDS,extrasaction='ignore');w.writeheader()
+                for r in rows:
+                    w.writerow({k:("'"+str(r.get(k,'')) if str(r.get(k,'')).startswith(('=','+','-','@')) else r.get(k,'')) for k in LiveTestEngine.SIGNAL_CSV_FIELDS})
+                return self.send(buf.getvalue().encode('utf-8-sig'),'text/csv; charset=utf-8',attachment='live_test_signals.csv')
             if path=='/api/ai-shadow':
                 from ai_shadow import summary as shadow_summary
                 return self.send(json.dumps(shadow_summary(store),allow_nan=False).encode(),'application/json')

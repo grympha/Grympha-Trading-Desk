@@ -49,6 +49,20 @@ Each engine is self-contained: **no strategy reads another's inputs, signals or 
 
 ---
 
+## Live Test (forward-test, fully simulated — separate from the three live engines)
+
+The **Live Test** tab forward-tests strategy agents on live MT5 data with a **read-only** feed
+(`market_data.py`): every entry, SL, TP, exit and P/L is a **simulation** — no `order_send`, no
+executor. Agents: six core agents + **H4 Liquidity Sweep + FVG** (`live_test_h4_liq.py`) + optional ORB.
+
+- **H4 Liquidity Sweep + FVG** — H4 equal-highs (EQH) / equal-lows (EQL) give the direction and the
+  target (midpoint of the two swings); a lower-timeframe (**M5 baseline**, M15/M1 optional) sweep of a
+  confirmed LTF swing, then the first FVG after the sweep, then a retrace to the 50% FVG midpoint fills
+  the simulated entry (BUY on Ask / SELL on Bid). SL beyond the sweep extreme; TP at the frozen H4 target.
+  Runs on **all 12 configured symbols**. Skipped / NO_FILL / cancelled setups go to an exportable
+  **Signal Log**; closed trades and a **per-symbol R summary** export to CSV. Start/Pause per agent or
+  **Start all / Pause all**. See [PROJECT_PROMPTS.md](PROJECT_PROMPTS.md) and `test_live_test_h4_liq.py`.
+
 ## Other project references
 
 - **README.md** — install, run modes, decision sequence overview.

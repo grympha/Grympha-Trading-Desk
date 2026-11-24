@@ -21,6 +21,12 @@ function ltControl(agentId, action) {
   .catch(err => { const n = $('lt-note'); if (n) n.textContent = 'Control failed: ' + err.message; });
 }
 
+function ltBulk(action) {
+ fetch('api/live-test-control', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dashboard-Request': 'controls' }, body: JSON.stringify({ action }) })
+  .then(res => { if (!res.ok) throw Error('HTTP ' + res.status); return refreshLiveTest(); })
+  .catch(err => { const n = $('lt-note'); if (n) n.textContent = 'Control failed: ' + err.message; });
+}
+
 function ltRows() { return (liveTestData && liveTestData.recent_trades) || []; }
 function ltFiltered() {
  const st = $('lt-filter-strategy').value, sy = $('lt-filter-symbol').value, rs = $('lt-filter-reason').value, dq = $('lt-filter-status').value;
@@ -63,6 +69,23 @@ function renderLiveTest() {
    + `<td>${Math.round((p.age_seconds || 0) / 60)}m</td><td>${esc(p.data_quality_status || 'OK')}</td></tr>`;
  }, { pageSize: 10, colspan: 10, empty: 'No open simulated positions.' });
 
+ // per-symbol summary (R-based roll-up across agents)
+ const bySym = r.by_symbol || [];
+ setHTML('lt-symbols', bySym.length ? bySym.map(d => {
+  const wr = d.win_rate == null ? '—' : (100 * d.win_rate).toFixed(1) + '%';
+  return `<tr><td><b>${esc(d.symbol)}</b></td><td>${d.agents ?? 0}</td><td>${d.running ?? 0}</td><td>${esc(d.feed || '—')}</td>`
+   + `<td>${d.signals ?? 0}</td><td>${d.no_fill ?? 0}</td><td>${d.closed ?? 0}</td><td>${wr}</td>`
+   + `<td class="${(d.net_r || 0) >= 0 ? 'buy' : 'sell'}">${fmt(d.net_r, 2)}</td><td>${d.data_gap ?? 0}</td></tr>`;
+ }).join('') : '<tr><td colspan="10" class="empty">No agents yet.</td></tr>');
+
+ // signal log: setups that never became a position (skipped / NO_FILL / cancelled)
+ paginate('lt-signals', 'lt-signals-pager', r.recent_signals || [], s => {
+  const sell = s.side === 'SELL';
+  return `<tr><td>${esc(s.epoch_myt || '—')}</td><td>${esc(s.strategy_id || '—')}</td><td><b>${esc(s.symbol || '—')}</b></td>`
+   + `<td class="${s.side ? (sell ? 'sell' : 'buy') : ''}">${esc(s.side || '—')}</td><td>${esc(s.event || '—')}</td>`
+   + `<td>${esc(s.reason || s.detail || '—')}</td><td>${s.h4_target_price == null ? '—' : fmt(s.h4_target_price, 2)}</td></tr>`;
+ }, { pageSize: 10, colspan: 7, empty: 'No signal-log entries yet.' });
+
  ltFillSelect('lt-filter-strategy', [...new Set(ltRows().map(t => t.strategy_id))]);
  ltFillSelect('lt-filter-symbol', [...new Set(ltRows().map(t => t.symbol))]);
  ltFillSelect('lt-filter-reason', [...new Set(ltRows().map(t => t.exit_reason).filter(Boolean))]);
@@ -98,3 +121,6 @@ $('lt-agents').addEventListener('click', e => { const b = e.target.closest('[dat
 for (const id of ['lt-filter-strategy', 'lt-filter-symbol', 'lt-filter-reason', 'lt-filter-status']) $(id).addEventListener('change', renderLiveTest);
 $('lt-csv-filtered').addEventListener('click', () => ltCsvDownload(ltFiltered(), 'live_test_trades_filtered.csv'));
 $('lt-csv-all').addEventListener('click', () => { if (demo) { ltCsvDownload(ltRows(), 'live_test_trades.csv'); return; } location.href = 'api/live-test.csv'; });
+$('lt-start-all').addEventListener('click', () => ltBulk('start_all'));
+$('lt-pause-all').addEventListener('click', () => ltBulk('pause_all'));
+$('lt-signals-csv').addEventListener('click', () => { if (demo) return; location.href = 'api/live-test-signals.csv'; });
