@@ -94,6 +94,19 @@ def atr(candles, period=14):
     return (sum(window) / len(window)) if window else None
 
 
+def ema_last(values, n):
+    """Exponential moving average (last value) over `values`, seeded on values[0] with the
+    standard 2/(n+1) weight. Matches the Momentum/Advocate desks' EMA so the ported agents
+    make the same bias decision. Returns None for an empty series."""
+    if not values:
+        return None
+    e = values[0]
+    k = 2.0 / (n + 1)
+    for v in values[1:]:
+        e += k * (v - e)
+    return e
+
+
 def dist(points_param, atr_mult, atr_value, point):
     """Resolve a distance in price. An explicit *_points value (not None) wins and pins a fixed
     distance; otherwise it is atr_mult * ATR (per-instrument). None when neither is available."""
@@ -694,6 +707,7 @@ class Simulator:
             initial_sl=signal['initial_sl'], initial_tp=signal['initial_tp'],
             entry_spread=round(quote.ask - quote.bid, quote.digits), risk=risk,
             entry_candle_end=signal.get('entry_candle_end'), status='OPEN',
+            stop=signal['initial_sl'],   # live stop; trails/break-even move it, R stays off initial_sl
             data_quality_status=VALID, last_sample_epoch=now, last_price=entry,
             current_price=entry, unrealized_pnl=0.0, unrealized_r=0.0,
             mfe_r=0.0, mae_r=0.0,
@@ -733,9 +747,10 @@ class Simulator:
         if r is not None:                       # maximum favorable / adverse excursion, in R
             pos['mfe_r'] = round(max(pos.get('mfe_r', 0.0) or 0.0, r), 4)
             pos['mae_r'] = round(min(pos.get('mae_r', 0.0) or 0.0, r), 4)
-        sl, tp = pos['initial_sl'], pos['initial_tp']
+        sl = pos.get('stop', pos['initial_sl'])      # trailed/break-even stop if one has been set
+        tp = pos['initial_tp']                        # None for agents that exit on stop/trail only
         sl_hit = (exit_basis <= sl) if buy else (exit_basis >= sl)
-        tp_hit = (exit_basis >= tp) if buy else (exit_basis <= tp)
+        tp_hit = tp is not None and ((exit_basis >= tp) if buy else (exit_basis <= tp))
         if sl_hit and tp_hit:
             # Both levels crossed within one sample -> path cannot be verified.
             return cls._close(pos, now, sl, spread, 'AMBIGUOUS_SL_TP', UNCERTAIN), True
@@ -748,6 +763,24 @@ class Simulator:
         end = pos.get('entry_candle_end')
         if end and now >= end:
             return cls._close(pos, now, exit_basis, spread, 'CANDLE_END', pos['data_quality_status']), True
+        # --- dynamic stop management: break-even, then trailing. Tighten only, never loosen. ---
+        # Driven by optional per-position fields (be_trigger_r / be_offset_points /
+        # trail_activation_r / trail_distance_r); absent for agents that use a fixed SL.
+        if r is not None and pos['risk']:
+            d = 1 if buy else -1
+            cand = sl
+            be_r = pos.get('be_trigger_r')
+            if be_r is not None and r >= be_r:
+                be = pos['entry_price'] + d * (pos.get('be_offset_points', 0.0) or 0.0) * quote.point
+                if d * (be - cand) > 0 and d * (exit_basis - be) > 0:
+                    cand = be
+            ta, td = pos.get('trail_activation_r'), pos.get('trail_distance_r')
+            if ta is not None and td is not None and r >= ta:
+                trail = exit_basis - d * td * pos['risk']
+                if d * (trail - cand) > 0:
+                    cand = trail
+            if d * (cand - sl) > 0:
+                pos['stop'] = round(cand, quote.digits)
         return pos, False
 
 
@@ -1142,6 +1175,18 @@ def build_agent(strategy_id, config):
             return InverseFvgRetest(config)
         except Exception:
             return None
+    if strategy_id == 'MOMENTUM_M5_M1':
+        try:
+            from live_test_momentum import MomentumM5M1
+            return MomentumM5M1(config)
+        except Exception:
+            return None
+    if strategy_id == 'ADVOCATE_EMA_PULLBACK':
+        try:
+            from live_test_advocate import AdvocateEmaPullback
+            return AdvocateEmaPullback(config)
+        except Exception:
+            return None
     return None
 
 
@@ -1202,3 +1247,6 @@ def ensure_default_agents(engine, cfg=None):
             _reg(build_agent(sid, ov.get(base) or {}), base)
     # Gold ORB 09:30 NY is XAUUSD-only (SELL baseline).
     _reg(build_agent('ORB_BREAKOUT_RETEST', cfg.get('orb') or {}), 'XAUUSD')
+    # Ported XAUUSD paper desks (gold-tuned ATR/sizing), XAUUSD-only like ORB.
+    _reg(build_agent('MOMENTUM_M5_M1', cfg.get('momentum') or {}), 'XAUUSD')
+    _reg(build_agent('ADVOCATE_EMA_PULLBACK', cfg.get('advocate') or {}), 'XAUUSD')

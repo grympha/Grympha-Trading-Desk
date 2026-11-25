@@ -55,10 +55,11 @@ The **Live Test** tab forward-tests strategy agents on live MT5 data with a **re
 (`market_data.py`): every entry, SL, TP, exit and P/L is a **simulation** — no `order_send`, no
 executor (a guard test scans every `live_test*` source for forbidden order tokens). The simulator
 fills BUY on Ask / SELL on Bid, exits on the opposite side, computes R from fill→initial-SL, flags
-stale-feed gaps as `DATA_GAP` and tracks MFE/MAE. Agents: six **core** H1 agents + **six structure
+stale-feed gaps as `DATA_GAP`, tracks MFE/MAE, and supports **break-even / trailing / no-take-profit**
+exit management (optional per-agent). Agents: six **core** H1 agents + the **eight structure / ported
 agents** below. Skipped / NO_FILL / cancelled setups go to an exportable **Signal Log**; closed
 trades and a **per-symbol R summary** export to CSV. Start/Pause per agent or **Start all / Pause
-all**. The tab auto-renders any registered agent, so all six appear automatically.
+all**. The tab auto-renders any registered agent, so all of them appear automatically.
 
 | # | Agent (`strategy_id`) | TF | Symbols | Core idea |
 |---|-----------------------|-----|---------|-----------|
@@ -68,6 +69,8 @@ all**. The tab auto-renders any registered agent, so all six appear automaticall
 | 4 | **H4 Swing Sweep + M15 FVG + Engulfing** (`H4_SWING_SWEEP_FVG_ENGULF`) | M15 | all 12 | un-broken H4 pivot swept → M15 FVG → engulfing confirm; TP = nearest H4 swing; 4 h exit |
 | 5 | **New York Sweep London** (`NY_SWEEP_LONDON`) | M5 | all 12 | London 08-12 range; NY-session sweep of an edge + CHoCH; TP = opposite London edge; 12:00 NY exit |
 | 6 | **Inverse FVG Retest** (`INVERSE_FVG_RETEST`) | M5 | all 12 | FVG flipped by a close through the whole gap → retest fills; **SWEEP_REQUIRED** variant; TP = M15 swing; 2 h exit |
+| 7 | **Momentum M5/M1** (`MOMENTUM_M5_M1`) | M1 (M5 bias) | XAUUSD | ported from the Momentum Desk — M5 EMA20/50 bias + M1 EMA20-pullback pending breakout; break-even + trailing, no TP, 15-min time stop |
+| 8 | **Advocate EMA Pullback** (`ADVOCATE_EMA_PULLBACK`) | M5 (M15 bias) | XAUUSD | ported from the XAU Advocate Desk — M15 EMA20/50 bias + M5 EMA20 pullback gated by a 3-objection debate (cost/extension/structure); trailing only, no TP |
 
 All agents use closed candles for structure, a shared min-R:R gate (`RR_TOO_LOW`), per-symbol
 tick/point profiles and per agent × symbol × config state. One offline symbol never blocks the
