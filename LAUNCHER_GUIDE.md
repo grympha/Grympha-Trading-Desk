@@ -61,3 +61,19 @@ Validation: launcher Python files syntax checked and read-only prerequisite logi
 3. In the launcher's **Telegram alerts** row: paste the token, click **Find my chat ID**, then **Send test**. When the test arrives, tick **Enable** and press **Save**.
 
 The token and chat ID are saved in `.env` on this PC (a backup is kept; other lines are untouched). The running bot picks up changes on its next message; no restart is needed. Choose which events are sent in the dashboard: **Settings → Telegram notifications** (new setup, order placed, filled, TP1, take-profit, stop-loss, early exit, SL moved, rejected, bot started/stopped and another-bot warning). Alerts are sent in the background and never delay or change trading.
+
+## Automatic updates from GitHub (launcher 1.13)
+
+The launcher keeps itself up to date from the GitHub repository. The **Updates** row shows the installed version, **Check now** / **Install update**, and two options (both on by default): **Check automatically** (45 s after the launcher opens, then every 30 minutes) and **Install automatically**. The tray menu also has **Check for updates**.
+
+**How an update is installed safely.** When GitHub has newer commits, the launcher:
+
+1. Tests the new version **in a separate temporary copy** outside this folder, running the full test suite there (about 2-3 minutes). The running bot keeps working on the current version meanwhile.
+2. Installs it **only if every test passes**, using a fast-forward (`git merge --ff-only`). If any test fails, nothing in this folder changes; the launcher shows *Update not installed* and will not retry that same version automatically (a newer one is tried, or press **Install update** to retry).
+3. Restarts the bot on the new version, in the same mode and port (graceful stop; broker SL/TP stay at the broker during the few seconds it is down). If the start fails, the normal crash auto-restart takes over.
+
+**What it never does.** It never installs automatically while the bot runs in **REAL execution** — it notifies you instead, and **Install update** asks for confirmation (and the REAL start is confirmed again unless REAL auto-start is allowed). It never overwrites your edits: if a program file was changed in this folder, or this folder has commits GitHub does not have, it stops and explains. It never touches `config.json`, `.env`, databases, logs or backups, and never merges, rebases, resets or force-pushes. If `requirements.txt` changed, the new packages are installed first and the old ones restored if the update is rejected.
+
+**Launcher files.** If the update changes the launcher itself (`launcher.py`, `START_APP.cmd`, …), the bot restarts on the new code right away, and a message asks you to reopen the launcher (tray → Exit launcher, then START_APP.cmd) to use the new launcher.
+
+**Requirements.** Updates need [Git for Windows](https://git-scm.com/download/win) and a folder that is a **git clone** of the repository; a folder extracted from a ZIP shows *not a git checkout* and updates stay off. To switch a PC to updates: stop the bot, clone the repository into a new folder (`git clone https://github.com/grympha/Grympha-Trading-Desk.git`), copy your `config.json`, `.env` and `dashboard.sqlite3` from the old folder, then start START_APP.cmd from the new folder. The first check may ask you to sign in to GitHub once. A PC running a launcher older than 1.13 has no updater yet: install this version once by hand (`git pull` in a clone), and later versions arrive automatically.

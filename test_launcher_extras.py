@@ -60,6 +60,31 @@ class LauncherExtras(unittest.TestCase):
         lx.save_settings({'last_mode': 'bogus'}, p)
         self.assertEqual(lx.load_settings(p)['last_mode'], 'analysis')
 
+    def test_update_settings_defaults_and_validation(self):
+        p = self.dir / 'u.json'
+        s = lx.load_settings(p)
+        self.assertEqual((s['update_auto_check'], s['update_auto_install'], s['update_check_minutes'], s['update_branch']),
+                         (True, True, 30, 'main'))
+        lx.save_settings({'update_check_minutes': 1}, p)                       # GitHub is not polled more than every 5 min
+        self.assertEqual(lx.load_settings(p)['update_check_minutes'], 5)
+        lx.save_settings({'update_check_minutes': 'often'}, p)
+        self.assertEqual(lx.load_settings(p)['update_check_minutes'], 30)
+        for bad in ('', '-main', '../x', 'a b', 'main;rm', 5):                  # never handed to git as an option/path trick
+            lx.save_settings({'update_branch': bad}, p)
+            self.assertEqual(lx.load_settings(p)['update_branch'], 'main', bad)
+        lx.save_settings({'update_branch': 'release/v2'}, p)
+        self.assertEqual(lx.load_settings(p)['update_branch'], 'release/v2')
+        lx.save_settings({'update_auto_install': 'yes'}, p)                    # only a real bool counts
+        self.assertTrue(lx.load_settings(p)['update_auto_install'] is True)
+        lx.save_settings({'update_auto_install': False}, p)
+        self.assertFalse(lx.load_settings(p)['update_auto_install'])
+
+    def test_tray_menu_offers_update_check(self):
+        events = [e for _, _, e in lx.TrayIcon.MENU if e]
+        self.assertIn('update', events)
+        ids = [c for c, _, _ in lx.TrayIcon.MENU if c]
+        self.assertEqual(len(ids), len(set(ids)))                                # menu command ids stay unique
+
     def test_icon_is_valid_ico(self):
         data = lx.write_icon(self.dir / 'i.ico').read_bytes()
         reserved, kind, count = struct.unpack('<HHH', data[:6])

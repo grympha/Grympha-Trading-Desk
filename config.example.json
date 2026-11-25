@@ -1,0 +1,113 @@
+{
+  "symbols": [
+    "XAUUSD",
+    "GBPJPY",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "NZDUSD",
+    "BTCUSD",
+    "ETHUSD",
+    "XAGUSD"
+  ],
+  "terminal_path": "",
+  "poll_seconds": 15,
+  "min_bb_width_atr": 2.0,
+  "signal_lookback": 12,
+  "touch_tolerance_atr": 0.1,
+  "enable_mhv": false,
+  "mhv_lookback": 30,
+  "confirmation_bars": 4,
+  "buffer_points": 2,
+  "buffer_atr": 0.05,
+  "max_spread_atr": 0.15,
+  "max_stop_atr": 5.0,
+  "max_tick_age_seconds": 60,
+  "bar_grace_seconds": 120,
+  "entry_expiry_minutes": 10,
+  "confluence": {
+    "enabled": true,
+    "symbols": [
+      "XAUUSD",
+      "GBPJPY",
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "AUDUSD",
+      "USDCAD",
+      "USDCHF",
+      "NZDUSD",
+      "BTCUSD",
+      "ETHUSD",
+      "XAGUSD"
+    ],
+    "check_seconds": 300,
+    "min_score": 4
+  },
+  "tracking": {
+    "enabled": true,
+    "telegram_update_seconds": 60,
+    "close_on_tp1": false
+  },
+  "demo_execution": {
+    "max_positions": 6
+  },
+  "trade_controls": {
+    "risk_enabled": true,
+    "risk_percent": 0.5,
+    "partial_enabled": false,
+    "partial_percent": 50.0,
+    "breakeven_enabled": false,
+    "breakeven_offset_points": 0.0,
+    "trailing_enabled": false,
+    "trailing_start_r": 1.0,
+    "trailing_distance_r": 1.0
+  },
+  "news_filter": {
+    "enabled": true,
+    "before_minutes": 30,
+    "after_minutes": 30,
+    "provider": "mt5",
+    "symbol_currencies": {
+      "BTCUSD": [
+        "USD"
+      ],
+      "ETHUSD": [
+        "USD"
+      ],
+      "XAGUSD": [
+        "USD"
+      ]
+    }
+  },
+  "history_timezone_offset_minutes": 480,
+  "history_timestamp_offset_hours": 0,
+  "real_execution": {
+    "account_login": null,
+    "account_server": "",
+    "max_positions": 6,
+    "auto_early_exit": {
+      "BBMA": false,
+      "CONFLUENCE": false,
+      "ORB": false
+    }
+  },
+  "orb": {
+    "enabled": true,
+    "trade": false,
+    "symbols": [
+      "XAUUSD"
+    ],
+    "range_start_hour": 1,
+    "range_end_hour": 6
+  },
+  "backup": {
+    "enabled": true,
+    "every_hours": 24,
+    "keep": 14,
+    "folder": "backups"
+  }
+}

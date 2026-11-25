@@ -5,6 +5,15 @@
 config.json
 config.*.json
 config.json.backup.*
+# ...but the template IS tracked: Setup copies it to config.json, and the tests read it
+# (no account, server or terminal path in it).
+!config.example.json
+
+# Local DB backups made before maintenance (contain live account data)
+dashboard.sqlite3.bak-*
+
+# Runtime health-alert log
+health_alerts.jsonl
 
 # Runtime state / dedup
 state.json

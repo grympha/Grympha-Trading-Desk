@@ -18,7 +18,10 @@ ICON_FILE = ROOT / 'launcher_icon.ico'
 STARTUP_NAME = 'Grympha Trading Desk.cmd'
 DEFAULT_SETTINGS = {'minimize_to_tray': True, 'start_in_tray': True, 'autostart_bot': False,
                     'autostart_mode': 'analysis', 'port': 8765, 'auto_restart': True,
-                    'last_mode': 'analysis', 'allow_real_auto': False}
+                    'last_mode': 'analysis', 'allow_real_auto': False,
+                    # self-update from GitHub (app_updater.py); never auto-installs while REAL is running
+                    'update_auto_check': True, 'update_auto_install': True,
+                    'update_check_minutes': 30, 'update_branch': 'main'}
 
 
 # ---------------------------------------------------------------- settings
@@ -33,6 +36,17 @@ def load_settings(path: Path = SETTINGS_FILE) -> dict:
         out['autostart_mode'] = 'analysis'
     if out['last_mode'] not in ('analysis', 'demo', 'real'):
         out['last_mode'] = 'analysis'
+    try:  # update cadence: whole minutes, at least 5 (GitHub is not polled more often than that)
+        out['update_check_minutes'] = max(5, int(out['update_check_minutes']))
+    except (TypeError, ValueError):
+        out['update_check_minutes'] = DEFAULT_SETTINGS['update_check_minutes']
+    branch = out['update_branch']
+    if not (isinstance(branch, str) and branch and all(c.isalnum() or c in '-_./' for c in branch)
+            and not branch.startswith(('-', '/')) and '..' not in branch):
+        out['update_branch'] = DEFAULT_SETTINGS['update_branch']
+    for key in ('update_auto_check', 'update_auto_install'):
+        if not isinstance(out[key], bool):
+            out[key] = DEFAULT_SETTINGS[key]
     return out
 
 
@@ -135,7 +149,8 @@ class TrayIcon:
     """Tray icon on its own thread. `on_event(name)` is called from that thread with
     'show', 'dashboard', 'stop', 'exit'; the launcher forwards it to Tk via its event queue."""
 
-    MENU = [(1, 'Show launcher', 'show'), (2, 'Open dashboard', 'dashboard'), (3, 'Stop bot', 'stop'), (5, 'Restart bot', 'restart'), (None, None, None), (4, 'Exit launcher', 'exit')]
+    MENU = [(1, 'Show launcher', 'show'), (2, 'Open dashboard', 'dashboard'), (3, 'Stop bot', 'stop'), (5, 'Restart bot', 'restart'),
+            (6, 'Check for updates', 'update'), (None, None, None), (4, 'Exit launcher', 'exit')]
 
     def __init__(self, tooltip: str, icon_path: Path, on_event):
         self.tooltip, self.icon_path, self.on_event = tooltip[:127], icon_path, on_event

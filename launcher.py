@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk,messagebox,filedialog
 from launcher_extras import (ICON_FILE,TrayIcon,load_settings,save_settings,read_real_account,save_real_account,
                              validate_real_account,startup_enabled,set_startup,show_console,write_icon)
+import app_updater
 STARTED_BY_WINDOWS='--startup' in sys.argv
 ROOT=Path(__file__).resolve().parent
 VENV=ROOT/'.venv'
@@ -42,7 +43,8 @@ class App:
         self.acquire_lock()
         self.settings=load_settings();self.tray=None;self.tray_hint_shown=False;self.auto_tries=0
         self.stop_requested=False;self.last_run=None;self.restart_times=[];self.restarting=False;self.restart_pending=False
-        root.title('Grympha Trading Desk · Automated Trading Agent · v1.11');root.geometry('1160x980');root.minsize(900,760)
+        self.update_busy=False;self.update_info=None;self.update_restart_pending=False;self.update_gen=0;self.failed_target=None
+        root.title('Grympha Trading Desk · Automated Trading Agent · v1.11');root.geometry('1160x1010');root.minsize(900,760)
         try:
             if not ICON_FILE.exists():write_icon(ICON_FILE)
             root.iconbitmap(default=str(ICON_FILE))
@@ -77,7 +79,7 @@ class App:
         self.stop_button=ttk.Button(run,text='Stop bot',command=self.stop,state='disabled');self.stop_button.pack(side='left',padx=3)
         self.restart_button=ttk.Button(run,text='Restart bot',command=self.restart_bot,state='disabled');self.restart_button.pack(side='left',padx=3)
         ttk.Button(run,text='Open dashboard',command=self.open_dashboard).pack(side='left',padx=3)
-        self.build_real_account(root);self.build_telegram(root);self.build_windows_options(root)
+        self.build_real_account(root);self.build_telegram(root);self.build_windows_options(root);self.build_updates(root)
         self.status=tk.StringVar(value='Ready · no bot started');ttk.Label(root,textvariable=self.status).pack(anchor='w',padx=18)
         self.log=tk.Text(root,height=9,font=('Consolas',9),wrap='word');self.log.pack(fill='both',padx=18,pady=(4,14))
         root.protocol('WM_DELETE_WINDOW',self.close);root.after(100,self.drain);root.after(400,self.check)
@@ -86,6 +88,7 @@ class App:
         if STARTED_BY_WINDOWS and self.settings['start_in_tray'] and self.tray:root.after(300,self.to_tray)
         if self.settings['autostart_bot']:root.after(20000 if STARTED_BY_WINDOWS else 3000,self.auto_start)
         if STARTED_BY_WINDOWS:root.after(1500,self.startup_notice)
+        if self.settings['update_auto_check']:root.after(90000 if STARTED_BY_WINDOWS else 45000,self.update_tick)
     # ---------------------------------------------------------------- REAL execution account
     def build_real_account(self,root):
         box=ttk.LabelFrame(root,text='REAL execution account (used only in REAL mode; must match the account logged into MT5)')
@@ -242,7 +245,7 @@ class App:
             if self.tray:self.tray.balloon('Bot not started',msg)
     def auto_start(self):
         if self.bot and self.bot.poll() is None:return
-        if self.busy:self.root.after(10000,self.auto_start);return
+        if self.busy or self.update_busy:self.root.after(10000,self.auto_start);return
         self.auto_tries+=1;mode=self.settings['autostart_mode']
         self.write(f'Auto-start attempt {self.auto_tries}/10 in {mode} mode…')
         self.mode.set(mode);self.start(auto=True);self.root.after(90000,self.auto_check)
@@ -278,7 +281,7 @@ class App:
         self.root.after(delay*1000,self.do_restart)
     def do_restart(self):
         if self.closing or self.stop_requested or (self.bot and self.bot.poll() is None):return
-        if self.busy:self.root.after(10000,self.do_restart);return
+        if self.busy or self.update_busy:self.root.after(10000,self.do_restart);return
         mode,port=self.last_run
         self.mode.set(mode);self.port.set(str(port));self.restarting=True
         self.start(auto=True)
@@ -286,6 +289,106 @@ class App:
     def restart_check(self):
         if self.bot and self.bot.poll() is None or self.stop_requested or self.closing:return
         self.restarting=False;self.write('Auto-restart attempt did not start the bot (see messages above).');self.handle_crash('start failed')
+    # ---------------------------------------------------------------- self-update from GitHub (app_updater.py)
+    def build_updates(self,root):
+        box=ttk.LabelFrame(root,text='Updates from GitHub (each update is tested in a separate copy first · never installed automatically during REAL execution)')
+        box.pack(fill='x',padx=18,pady=(2,4))
+        self.version_text=tk.StringVar(value=self.version_label());ttk.Label(box,textvariable=self.version_text).pack(side='left',padx=(8,10),pady=6)
+        self.update_check_button=ttk.Button(box,text='Check now',command=lambda:self.check_updates(manual=True));self.update_check_button.pack(side='left',padx=3)
+        self.update_install_button=ttk.Button(box,text='Install update',command=lambda:self.install_update(manual=True),state='disabled')
+        self.update_install_button.pack(side='left',padx=3)
+        self.opt_upd_check=tk.BooleanVar(value=self.settings['update_auto_check']);self.opt_upd_install=tk.BooleanVar(value=self.settings['update_auto_install'])
+        ttk.Checkbutton(box,text='Check automatically',variable=self.opt_upd_check,command=self.save_update_options).pack(side='left',padx=(12,4))
+        ttk.Checkbutton(box,text='Install automatically',variable=self.opt_upd_install,command=self.save_update_options).pack(side='left',padx=4)
+        self.update_state=tk.StringVar(value='Not checked yet');ttk.Label(box,textvariable=self.update_state,foreground='#4a5d73').pack(side='left',padx=10)
+    def version_label(self):
+        v=app_updater.current_version(ROOT)
+        return f"Installed: {v['hash']} · {v['date']}" if v else 'Installed: unknown (not a git checkout)'
+    def save_update_options(self):
+        was_on=self.settings['update_auto_check']
+        self.settings.update(update_auto_check=self.opt_upd_check.get(),update_auto_install=self.opt_upd_install.get())
+        try:save_settings(self.settings)
+        except Exception as e:self.write('Launcher settings not saved: '+str(e))
+        if self.settings['update_auto_check'] and not was_on:self.root.after(2000,self.update_tick)
+    def update_tick(self,gen=None):
+        """Periodic check. Each (re)start opens a new generation, so toggling the option never stacks timers."""
+        if gen is None:self.update_gen+=1;gen=self.update_gen
+        if gen!=self.update_gen or self.closing or not self.settings['update_auto_check']:return
+        self.check_updates(manual=False)
+        self.root.after(self.settings['update_check_minutes']*60000,lambda:self.update_tick(gen))
+    def bot_running(self):return bool(self.bot and self.bot.poll() is None)
+    def update_buttons(self,enabled):
+        self.update_check_button.configure(state='normal' if enabled else 'disabled')
+        avail=enabled and bool(self.update_info) and self.update_info.get('state')==app_updater.AVAILABLE
+        self.update_install_button.configure(state='normal' if avail else 'disabled')
+    def check_updates(self,manual=False):
+        if self.update_busy:
+            if manual:messagebox.showinfo('Updates','An update check or install is already running.')
+            return
+        self.update_busy=True;self.update_buttons(False);self.update_state.set('Checking GitHub for updates…')
+        def work():
+            try:info=app_updater.status(ROOT,self.settings['update_branch'])
+            except Exception as exc:info=dict(state=app_updater.ERROR,message='Update check failed: '+str(exc)[:200],commits=[],remote=None)
+            self.events.put(('update_status',(info,manual)))
+        threading.Thread(target=work,daemon=True).start()
+    def on_update_status(self,info,manual):
+        self.update_busy=False;self.update_info=info;self.update_buttons(True);self.update_state.set(info['message'])
+        if info['state']!=app_updater.AVAILABLE:
+            if manual:(messagebox.showinfo if info['state'] in (app_updater.UP_TO_DATE,app_updater.AHEAD) else messagebox.showwarning)('Updates',info['message'])
+            return
+        commits='\n'.join(info['commits'][:8])+('\n…' if len(info['commits'])>8 else '')
+        self.write('Update available: '+info['message']+'\n'+commits)
+        if manual:
+            if messagebox.askyesno('Install update?',info['message']+'\n\n'+commits+'\n\nThe update is tested in a separate copy first; '
+                'if any test fails nothing is changed. If it installs, the bot restarts on the new version. Install now?'):
+                self.install_update(manual=True)
+            return
+        if info.get('remote') and info['remote']==self.failed_target:  # same version already failed: wait for a newer one
+            self.update_state.set(f"Update {info['remote']} failed its tests earlier · waiting for a newer version (Install update to retry)")
+            return
+        if self.settings['update_auto_install']:self.install_update(manual=False)
+        elif self.tray:self.tray.balloon('Update available',info['message']+' Open the launcher to install it.')
+    def install_update(self,manual=False):
+        if self.update_busy:
+            if manual:messagebox.showinfo('Updates','An update check or install is already running.')
+            return
+        if self.busy:  # setup / requirement checks / a bot start are running
+            if manual:messagebox.showinfo('Updates','Wait for the current setup/check/start to finish, then install.');return
+            self.write('Update deferred: setup/check in progress; retrying in 2 minutes.');self.root.after(120000,lambda:self.install_update(False));return
+        mode=(self.last_run or ('analysis',None))[0]
+        if self.bot_running() and mode=='real':
+            if not manual:
+                msg='Update available, but the bot is in REAL execution: updates are never installed automatically then. Use Install update when ready.'
+                self.write(msg);self.update_state.set('Update available · install it manually (REAL execution is running)')
+                if self.tray:self.tray.balloon('Update available',msg)
+                return
+            if not messagebox.askyesno('Install during REAL execution?','The REAL bot will be stopped gracefully, updated, then started again '
+                    '(you will be asked to confirm the REAL start unless REAL auto-start is allowed). Broker SL/TP stay at the broker meanwhile. Continue?',
+                    icon='warning',default='no'):return
+        self.update_busy=True;self.update_buttons(False);self.update_state.set('Installing update · testing it in a separate copy (about 2 minutes)…')
+        if self.tray:self.tray.set_tooltip('Grympha Trading Desk · installing update…')
+        def work():
+            try:res=app_updater.apply(ROOT,self.python(),self.settings['update_branch'],log=self.write)
+            except Exception as exc:res=dict(ok=False,state=app_updater.ERROR,message='Update failed: '+str(exc)[:300],launcher_changed=False)
+            self.events.put(('update_result',res))
+        threading.Thread(target=work,daemon=True).start()
+    def on_update_result(self,res):
+        self.update_busy=False;self.update_info=None;self.update_buttons(True)
+        self.version_text.set(self.version_label());self.update_state.set(res['message']);self.write(res['message'])
+        if self.tray:self.tray.set_tooltip('Grympha Trading Desk · '+('bot running' if self.bot_running() else 'ready'))
+        if not res['ok']:
+            if res['state'] in (app_updater.TESTS_FAILED,app_updater.DEPS_FAILED):self.failed_target=res.get('to')
+            if self.tray:self.tray.balloon('Update not installed',res['message'])
+            return
+        if res['state']!=app_updater.UPDATED:return  # nothing was pending after all
+        self.failed_target=None
+        if self.tray:self.tray.balloon('Update installed',res['message'])
+        if res.get('launcher_changed'):
+            msg='The launcher itself was updated: close and reopen it (Exit launcher, then START_APP.cmd) to use the new launcher.'
+            self.write(msg)
+            if self.tray:self.root.after(8000,lambda:self.tray.balloon('Reopen the launcher',msg))
+        if self.bot_running():
+            self.write('Restarting the bot on the new version…');self.update_restart_pending=True;self.stop()
     # ---------------------------------------------------------------- tray
     def start_tray(self):
         try:
@@ -320,6 +423,8 @@ class App:
         return sys.executable
     def write(self,text):self.events.put(('log',str(text)))
     def task(self,label,fn):
+        if self.update_busy:  # the update rewrites program files; nothing else may run meanwhile
+            messagebox.showinfo('Updating','An update is being checked or installed. Try again in a minute.');return
         if self.busy or self.bot and self.bot.poll() is None:
             messagebox.showinfo('Busy','Stop the bot or wait for the current check/setup first.');return
         self.busy=True;self.status.set(label)
@@ -504,7 +609,10 @@ class App:
                     elif data=='dashboard':self.open_dashboard()
                     elif data=='stop':self.show_window();self.stop()
                     elif data=='restart':self.show_window();self.restart_bot()
+                    elif data=='update':self.show_window();self.check_updates(manual=True)
                     elif data=='exit':self.show_window();self.close()
+                elif kind=='update_status':self.on_update_status(*data)
+                elif kind=='update_result':self.on_update_result(data)
                 elif kind=='telegram':
                     self.tg_busy(False)
                     import telegram_config as tg
@@ -536,7 +644,14 @@ class App:
                         if self.root.state()=='withdrawn' and not self.closing:self.tray.balloon('Bot stopped','The bot exited (code '+str(data)+'). Open the launcher for details.')
                     for b in self.buttons:b.configure(state='normal')
                     if self.closing:self.quit_app();return
-                    if self.restart_pending:
+                    if self.update_restart_pending:  # stopped to apply an update: start it again on the new code
+                        self.update_restart_pending=False;self.stop_requested=False
+                        mode,port=self.last_run or (self.mode.get(),self.port_number())
+                        self.mode.set(mode);self.port.set(str(port))
+                        self.write(f'Bot stopped for the update — starting it again in {mode} mode…')
+                        if mode=='real' and not self.settings.get('allow_real_auto'):self.root.after(1500,self.start)  # asks to confirm REAL
+                        else:self.root.after(1500,self.do_restart)  # auto start, with the crash-retry safety net
+                    elif self.restart_pending:
                         self.restart_pending=False
                         mode,port=self.last_run or (self.mode.get(),self.port_number())
                         self.mode.set(mode);self.port.set(str(port));self.stop_requested=False
@@ -551,6 +666,7 @@ class App:
         except queue.Empty:pass
         self.root.after(100,self.drain)
     def close(self):
+        if self.update_busy:messagebox.showinfo('Updating','Wait for the update check/install to finish before closing.');return
         if self.busy:messagebox.showinfo('Working','Wait for setup/checks to finish before closing.');return
         if self.bot and self.bot.poll() is None:
             if messagebox.askyesno('Stop bot and close?','Stop the bot before closing? Existing demo positions and broker SL/TP remain; local management stops.'):
