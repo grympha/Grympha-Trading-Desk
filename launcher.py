@@ -59,7 +59,7 @@ class App:
             b=ttk.Button(bar,text=label,command=fn);b.grid(row=i//3,column=i%3,padx=4,pady=4,sticky='ew');self.buttons.append(b)
         for i in range(3):bar.columnconfigure(i,weight=1)
         tools=ttk.Frame(root);tools.pack(fill='x',padx=18)
-        for label,name in [('Configure 9 pairs','configure_major_pairs.py'),('Enable MT5 news','configure_v1_8.py'),('Calendar diagnostics','diagnose_mt5_calendar.py'),('Time diagnostics','--diagnose-time')]:
+        for label,name in [('Configure 9 pairs','configure_major_pairs.py'),('Enable MT5 news','configure_v1_8.py'),('Set clock offset','configure_clock_offset.py'),('Calendar diagnostics','diagnose_mt5_calendar.py'),('Time diagnostics','--diagnose-time')]:
             b=ttk.Button(tools,text=label,command=lambda n=name:self.script(n));b.pack(side='left',padx=3,pady=4);self.buttons.append(b)
         ttk.Button(tools,text='Setup guide',command=self.guide).pack(side='right',padx=3)
         frame=ttk.Frame(root);frame.pack(fill='both',expand=True,padx=18,pady=8)
@@ -496,7 +496,10 @@ class App:
         self.task('Installing read-only Calendar Bridge source…',work)
     def script(self,name):
         args=[self.python(),str(ROOT/'bbma_bot.py'),name] if name.startswith('--') else [self.python(),str(ROOT/name)]
-        self.task('Running '+name,lambda:self.command(args,timeout=180))
+        def work():
+            self.command(args,timeout=180)
+            if name=='configure_clock_offset.py':self.collect()   # show the quote rows with the new offset
+        self.task('Running '+name,work)
     def port_number(self):
         value=int(self.port.get())
         if not 1024<=value<=65535:raise ValueError('Port must be 1024..65535')

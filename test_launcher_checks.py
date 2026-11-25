@@ -29,6 +29,21 @@ class Prerequisites(unittest.TestCase):
     def test_clock_bad_quote(self):
         m=self.mt5();m.symbol_info_tick=lambda *a:N(time=int(time.time())+7200,bid=1,ask=1.001)
         rows,_=lc.inspect_mt5(self.cfg(),m);self.assertTrue(any(r['name'].endswith('quote') and r['status']=='FAIL' for r in rows))
+    def test_missing_offset_names_the_broker_clock(self):
+        # New install (no offset) on a UTC+2 broker: quotes look 2 h in the future.
+        m=self.mt5();m.symbol_info_tick=lambda *a:N(time=int(time.time())+7200,bid=1,ask=1.001)
+        row=next(r for r in lc.inspect_mt5(self.cfg(),m)[0] if r['name'].endswith('quote'))
+        self.assertEqual(row['status'],'FAIL');self.assertIn('UTC+2',row['detail']);self.assertIn('Set clock offset',row['guide'])
+    def test_dst_change_names_the_new_offset(self):
+        # Offset 2 saved, broker moved to UTC+3 for summer time.
+        m=self.mt5();m.symbol_info_tick=lambda *a:N(time=int(time.time())+3*3600,bid=1,ask=1.001)
+        cfg=dict(self.cfg(),tick_timestamp_offset_hours=2)
+        row=next(r for r in lc.inspect_mt5(cfg,m)[0] if r['name'].endswith('quote'))
+        self.assertIn('UTC+3',row['detail']);self.assertIn('offset set to 2 h',row['detail'])
+    def test_correct_offset_passes(self):
+        m=self.mt5();m.symbol_info_tick=lambda *a:N(time=int(time.time())+7200,bid=1,ask=1.001)
+        cfg=dict(self.cfg(),tick_timestamp_offset_hours=2)
+        self.assertTrue(all(r['status']=='PASS' for r in lc.inspect_mt5(cfg,m)[0] if r['name'].endswith('quote')))
     def test_disconnected(self):
         m=self.mt5();m.terminal_info=lambda:N(connected=False,data_path='C:/test')
         rows,_=lc.inspect_mt5(self.cfg(),m);self.assertTrue(any(r['name']=='MT5 connection' and r['status']=='FAIL' for r in rows))

@@ -59,7 +59,12 @@ def inspect_mt5(cfg,mt5):
                 from market_hours import describe,trades_24_7
                 closed=None if trades_24_7(symbol) else describe()
             if closed:add(symbol+' quote','CLOSED',closed+f' · last quote {age/3600:.1f} h ago','Normal outside market hours. The bot waits and resumes by itself when prices update.')
-            else:add(symbol+' quote','PASS' if good else 'FAIL','Fresh quote' if good else 'Stale/missing quote or clock mismatch','Check market hours, Windows time and Time diagnostics. Do not guess offsets.' if not good else '')
+            elif not good and tick and tick.bid>0 and abs(age)>=1800 and abs(age/3600-round(age/3600))<=0.1:
+                # A whole number of hours off: the broker clock offset is not set (new install) or changed (DST).
+                offset=float(cfg.get('tick_timestamp_offset_hours',0) or 0);broker=round(offset-age/3600)
+                add(symbol+' quote','FAIL',f'Clock offset mismatch: broker clock looks UTC{broker:+d}, offset set to {offset:g} h',
+                    'Click Set clock offset (measures the broker clock from live quotes and saves it), then Check requirements again.')
+            else:add(symbol+' quote','PASS' if good else 'FAIL','Fresh quote' if good else 'Stale/missing quote or clock mismatch','Check market hours, Windows time and Time diagnostics, or click Set clock offset.' if not good else '')
             missing=[]
             for name in ('H4','H1','M15','M5'):
                 rates=mt5.copy_rates_from_pos(symbol,getattr(mt5,'TIMEFRAME_'+name),1,400)
