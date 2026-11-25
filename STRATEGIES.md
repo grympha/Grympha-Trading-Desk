@@ -56,8 +56,9 @@ The **Live Test** tab forward-tests strategy agents on live MT5 data with a **re
 executor (a guard test scans every `live_test*` source for forbidden order tokens). The simulator
 fills BUY on Ask / SELL on Bid, exits on the opposite side, computes R from fill→initial-SL, flags
 stale-feed gaps as `DATA_GAP`, tracks MFE/MAE, and supports **break-even / trailing / no-take-profit**
-exit management (optional per-agent). Agents: six **core** H1 agents + the **eight structure / ported
-agents** below. Skipped / NO_FILL / cancelled setups go to an exportable **Signal Log**; closed
+exit management (optional per-agent). Agents: six **core** H1 agents + the **nine structure / ported
+agents** below (the AMD Power-of-Three agent registers three entry models — C1 / A1 / B1 — as
+separate agents). Skipped / NO_FILL / cancelled setups go to an exportable **Signal Log**; closed
 trades and a **per-symbol R summary** export to CSV. Start/Pause per agent or **Start all / Pause
 all**. The tab auto-renders any registered agent, so all of them appear automatically.
 
@@ -71,6 +72,7 @@ all**. The tab auto-renders any registered agent, so all of them appear automati
 | 6 | **Inverse FVG Retest** (`INVERSE_FVG_RETEST`) | M5 | all 12 | FVG flipped by a close through the whole gap → retest fills; **SWEEP_REQUIRED** variant; TP = M15 swing; 2 h exit |
 | 7 | **Momentum M5/M1** (`MOMENTUM_M5_M1`) | M1 (M5 bias) | XAUUSD | ported from the Momentum Desk — M5 EMA20/50 bias + M1 EMA20-pullback pending breakout; break-even + trailing, no TP, 15-min time stop |
 | 8 | **Advocate EMA Pullback** (`ADVOCATE_EMA_PULLBACK`) | M5 (M15 bias) | XAUUSD | ported from the XAU Advocate Desk — M15 EMA20/50 bias + M5 EMA20 pullback gated by a 3-objection debate (cost/extension/structure); trailing only, no TP |
+| 9 | **AMD Power of Three** (`AMD_PO3`, models C1/A1/B1) | M5 (H1 context) | XAUUSD | Market Cycle Guide model C1 — 06:00-06:55 UTC range, H1 pivot context frozen at 07:00, failed-breakout sweep → reclaim → origin confirm → retest; SL beyond the sweep extreme, TP inside the opposite boundary, ≥1.5 R:R, 10:00 UTC cutoff. A1 enters on the reclaim, B1 on the confirm (no retest) |
 
 All agents use closed candles for structure, a shared min-R:R gate (`RR_TOO_LOW`), per-symbol
 tick/point profiles and per agent × symbol × config state. One offline symbol never blocks the

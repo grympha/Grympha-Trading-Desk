@@ -99,7 +99,8 @@ class ReadOnlyGuard(unittest.TestCase):
     def test_live_test_sources_have_no_order_api(self):
         for name in ('live_test.py', 'market_data.py', 'live_test_h4_liq.py', 'live_test_crt.py',
                      'live_test_orb.py', 'live_test_h4_swing.py', 'live_test_ny_london.py',
-                     'live_test_ifvg.py', 'live_test_momentum.py', 'live_test_advocate.py'):
+                     'live_test_ifvg.py', 'live_test_momentum.py', 'live_test_advocate.py',
+                     'live_test_amd.py'):
             code = self._code_only(name)
             for tok in self.FORBIDDEN:
                 self.assertNotIn(tok, code, f'{name} code must not reference {tok!r} (read-only Live Test)')
@@ -573,18 +574,22 @@ class CmsRegistration(unittest.TestCase):
                     if la.base_symbol == base and la.agent.strategy_id
                     not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG', 'CRT_H1_M5',
                             'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST',
-                            'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK')}
+                            'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3')}
             self.assertEqual(len(core), 6)
             per_pair = {la.agent.strategy_id for la in eng.agents.values()
                         if la.base_symbol == base}
             for sid in ('H4_LIQ_SWEEP_FVG', 'CRT_H1_M5', 'H4_SWING_SWEEP_FVG_ENGULF',
                         'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST'):
                 self.assertIn(sid, per_pair)
-        # ORB and the two ported gold desks are XAUUSD-only
-        for sid in ('ORB_BREAKOUT_RETEST', 'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK'):
+        # ORB, the two ported gold desks and the AMD Power-of-Three models are XAUUSD-only
+        for sid in ('ORB_BREAKOUT_RETEST', 'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3'):
             bases = {la.base_symbol for la in eng.agents.values()
                      if la.agent.strategy_id == sid}
             self.assertEqual(bases, {'XAUUSD'}, sid)
+        # AMD registers its three entry models (C1/A1/B1) as separate agents on XAUUSD
+        amd = {la.agent.config.get('model') for la in eng.agents.values()
+               if la.agent.strategy_id == 'AMD_PO3'}
+        self.assertEqual(amd, {'C1', 'A1', 'B1'})
 
 
 class AtrSizing(unittest.TestCase):

@@ -1187,6 +1187,12 @@ def build_agent(strategy_id, config):
             return AdvocateEmaPullback(config)
         except Exception:
             return None
+    if strategy_id == 'AMD_PO3':
+        try:
+            from live_test_amd import AmdPowerOfThree
+            return AmdPowerOfThree(config)
+        except Exception:
+            return None
     return None
 
 
@@ -1250,3 +1256,11 @@ def ensure_default_agents(engine, cfg=None):
     # Ported XAUUSD paper desks (gold-tuned ATR/sizing), XAUUSD-only like ORB.
     _reg(build_agent('MOMENTUM_M5_M1', cfg.get('momentum') or {}), 'XAUUSD')
     _reg(build_agent('ADVOCATE_EMA_PULLBACK', cfg.get('advocate') or {}), 'XAUUSD')
+    # AMD / Power-of-Three (Market Cycle Guide model C1 + A1/B1 comparison triggers),
+    # 06:00-10:00 UTC window, XAUUSD-only. One agent per entry model so the three can be
+    # compared side by side as the guide intends.
+    amd_cfg = cfg.get('amd') or {}
+    amd_models = amd_cfg.get('models') or ['C1', 'A1', 'B1']
+    for _m in amd_models:
+        _reg(build_agent('AMD_PO3', {**{k: v for k, v in amd_cfg.items() if k != 'models'},
+                                     'model': _m}), 'XAUUSD')
