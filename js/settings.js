@@ -189,7 +189,7 @@ function orbChanges(a,b){
 document.addEventListener('input',e=>{if(e.target.closest('.strategy-orb'))$('orb-rules').textContent=orbSummary(readOrbControls());});
 
 // ---- v1.28 Telegram notifications ----
-const TG_DEFAULTS={entry_signal:true,order_placed:true,filled:true,tp1:true,sl_moved:false,tp_hit:true,sl_hit:true,closed_other:true,order_rejected:true,health:true,setup_board:false};
+const TG_DEFAULTS={entry_signal:true,order_placed:true,filled:true,tp1:true,sl_moved:false,tp_hit:true,sl_hit:true,closed_other:true,order_rejected:true,health:true,setup_board:false,signal_agent:false};
 let tgDirty=false;
 function renderTelegram(s){
  const t=s.meta.telegram||{},st=s.meta.telegram_status||{},prefs={...TG_DEFAULTS,...(s.meta.telegram_prefs||{})};

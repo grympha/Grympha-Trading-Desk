@@ -12,6 +12,7 @@ async function refreshLiveTest() {
   if (!res.ok) throw Error('HTTP ' + res.status);
   const r = await res.json(); if (req !== liveTestReq) return;
   liveTestData = r; renderLiveTest();
+  refreshSignalAgent();
  } catch (e) { if (req !== liveTestReq) return; liveTestData = { error: e.message, agents: [], recent_trades: [] }; renderLiveTest(); }
 }
 
@@ -149,3 +150,41 @@ $('lt-csv-all').addEventListener('click', () => { if (demo) { ltCsvDownload(ltRo
 $('lt-start-all').addEventListener('click', () => ltBulk('start_all'));
 $('lt-pause-all').addEventListener('click', () => ltBulk('pause_all'));
 $('lt-signals-csv').addEventListener('click', () => { if (demo) return; location.href = 'api/live-test-signals.csv'; });
+
+// ---- Signal Agent: graded feed of new Live Test setups (simulated; nothing is traded) ----
+let signalData = null;
+async function refreshSignalAgent() {
+ try {
+  if (demo) { signalData = { feed: [], by_grade: [] }; renderSignalAgent(); return; }
+  const res = await fetch('api/signal-agent', { cache: 'no-store' });
+  if (!res.ok) throw Error('HTTP ' + res.status);
+  signalData = await res.json(); renderSignalAgent();
+ } catch (e) { signalData = { error: e.message, feed: [], by_grade: [] }; renderSignalAgent(); }
+}
+const SA_CLS = { A: 'good', B: 'warn', C: '', X: 'bad' };
+// enough decimals for any instrument: FX 5, JPY / silver 3, gold / indices / crypto 2
+const saPx = v => v == null ? '—' : fmt(v, Math.abs(v) < 20 ? 5 : Math.abs(v) < 1000 ? 3 : 2);
+function renderSignalAgent() {
+ const r = signalData; if (!r) return;
+ if ($('sa-note')) $('sa-note').textContent = r.error ? ('Signal Agent unavailable: ' + r.error)
+  : (r.backtested_agents ? `${r.backtested_agents} agents have a Quant Agent backtest`
+     + (r.last_backtest_epoch ? ` (latest ${date(r.last_backtest_epoch, true)})` : '') + '. '
+   : 'No Quant Agent backtest yet: grades use Live Test results only (run quant_agent.py --live). ')
+   + 'Simulated setups only; nothing is traded.';
+ setHTML('sa-grades', (r.by_grade || []).map(g => `<div><span class="stat-label">${chip(g.grade + ' · ' + g.name, SA_CLS[g.grade])}</span>`
+  + `<strong>${g.signals}</strong><small class="muted"> setups · ${g.closed} closed`
+  + (g.avg_r == null ? '' : ` · ${g.avg_r >= 0 ? '+' : ''}${g.avg_r}R avg · ${(100 * g.win_rate).toFixed(0)}% win`) + `</small></div>`).join(''));
+ const want = $('sa-filter-grade').value;
+ const rows = (r.feed || []).filter(f => want === 'ALL' || f.grade === want);
+ paginate('sa-feed', 'sa-feed-pager', rows, f => {
+  const buy = f.side === 'BUY', o = f.outcome || {}, rr = o.r;
+  const out = o.status === 'CLOSED' ? `${esc(o.exit_reason || 'Closed')} · ${rr == null ? '—' : fmt(rr, 2) + 'R'}`
+   : o.status === 'OPEN' ? `Open · ${rr == null ? '—' : fmt(rr, 2) + 'R'}` : '—';
+  const [day, time] = String(f.entry_myt || '— ').split(' ');
+  return `<tr><td style="white-space:nowrap">${esc(time || '—')}<small class="muted" style="display:block">${esc(day)}</small></td><td>${chip(f.grade, SA_CLS[f.grade])}</td><td>${esc(f.label || f.strategy_id)}</td>`
+   + `<td><b>${esc(f.symbol)}</b></td><td class="${buy ? 'buy' : 'sell'}">${esc(f.side)}</td>`
+   + `<td>${saPx(f.entry_price)}</td><td>${saPx(f.initial_sl)}</td><td>${saPx(f.initial_tp)}</td>`
+   + `<td class="small" style="min-width:300px">${esc(f.reason || '')}</td><td class="${rr == null ? '' : rr >= 0 ? 'buy' : 'sell'}" style="white-space:nowrap">${out}</td></tr>`;
+ }, { pageSize: 10, colspan: 10, empty: 'No graded setups match this filter yet.' });
+}
+$('sa-filter-grade').addEventListener('change', renderSignalAgent);

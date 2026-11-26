@@ -27,6 +27,7 @@ EVENTS = {  # key: (label, default)
     'order_rejected': ('Order rejected / cancelled', True),
     'health': ('Bot started/stopped, another bot on the account', True),
     'setup_board': ('Live setup board (one message per setup, edited as it progresses)', False),
+    'signal_agent': ('Signal Agent: grade-A Live Test setup (simulated, never traded)', False),
 }
 OPEN = ('OPEN', 'OPEN_PARTIAL')
 PENDING = ('PENDING', 'SUBMITTED')

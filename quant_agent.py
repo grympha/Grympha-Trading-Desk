@@ -286,6 +286,44 @@ def run(jobs, start, end, cfg, mt5, extra_spread_points=0.0, log=print):
     return results
 
 
+# --------------------------------------------------------------------------- results store
+# The newest backtest per agent id, read by the Signal Agent to grade live setups. Compact stats
+# only (no trade list). Agent ids match Live Test ids, so a result applies to the same config.
+RESULTS_SCHEMA = '''CREATE TABLE IF NOT EXISTS quant_results(
+ agent_id TEXT PRIMARY KEY, strategy_id TEXT, symbol TEXT, config_id TEXT, setup TEXT,
+ start REAL, end REAL, created REAL, verdict TEXT, stats TEXT)'''
+
+
+def compact(stats):
+    keep = ('trades', 'win_rate', 'net_r', 'avg_r', 'max_dd_r', 'net_r_without_best', 'excluded')
+    out = {k: stats.get(k) for k in keep}
+    pf = stats.get('profit_factor')
+    out['profit_factor'] = None if pf is None or math.isinf(pf) else pf
+    oos = stats.get('out_of_sample') or {}
+    out['oos_trades'], out['oos_net_r'] = oos.get('trades'), oos.get('net_r')
+    return out
+
+
+def save_results(store, results, now=None):
+    now = time.time() if now is None else now
+    with store.connect() as db:
+        db.execute(RESULTS_SCHEMA)
+        for r in results:
+            db.execute('INSERT OR REPLACE INTO quant_results VALUES (?,?,?,?,?,?,?,?,?,?)',
+                       (f"{r['strategy_id']}|{r['symbol']}|{r['config_id']}", r['strategy_id'], r['symbol'],
+                        r['config_id'], r.get('setup') or '', r['start'], r['end'], now, r['verdict'],
+                        json.dumps(compact(r['stats']), allow_nan=False)))
+
+
+def load_results(store):
+    """{agent_id: dict(verdict, start, end, created, **compact stats)}; empty before the first run."""
+    with store.connect() as db:
+        db.execute(RESULTS_SCHEMA)
+        rows = db.execute('SELECT * FROM quant_results').fetchall()
+    return {r['agent_id']: dict(json.loads(r['stats']), verdict=r['verdict'], start=r['start'], end=r['end'],
+                                created=r['created']) for r in rows}
+
+
 # --------------------------------------------------------------------------- reports
 def write_reports(results, folder: Path, start, end, extra_spread_points):
     folder.mkdir(parents=True, exist_ok=True)
@@ -387,6 +425,9 @@ def main(argv=None):
     finally:
         mt5.shutdown()
     paths = write_reports(results, ROOT / 'reports', start, end, a.extra_spread_points)
+    if not a.extra_spread_points:          # stress tests are reports only; they never replace the grades
+        save_results(store, results)
+        print(f'Saved {len(results)} results for the Signal Agent.')
     print('Reports:', *[str(x) for x in paths], sep='\n  ')
 
 

@@ -411,6 +411,7 @@ def _run(args):
                 ensure_default_agents(live_engine,cfg)
             except Exception as exc:
                 logging.warning('Live Test engine unavailable: %s', exc)
+        signal_agent=None
         if not args.once:journal.start_monitor()
         notifier=None
         if store and not args.once:
@@ -420,6 +421,15 @@ def _run(args):
                 notifier.lifecycle(f"▶ Grympha bot started · {notifier.mode} · {len(cfg['symbols'])} pairs · strategies BBMA, Confluence"+(', ORB' if orb_runner else ''))
             except Exception as exc:
                 logging.warning('Telegram alerts unavailable: %s', exc)
+        if live_engine:
+            try:
+                from signal_agent import SignalAgent, telegram_text
+                from telegram_notify import load_prefs as telegram_prefs
+                def signal_alert(feed):
+                    if notifier and telegram_prefs(store).get('signal_agent'):notifier.push(telegram_text(feed))
+                signal_agent=SignalAgent(store,alert=signal_alert)  # grades Live Test setups · never trades
+            except Exception as exc:
+                logging.warning('Signal Agent unavailable: %s', exc)
         while True:
             journal.refresh_sources(executor.news if executor else calendar)
             journal.submission_errors.clear()
@@ -481,6 +491,9 @@ def _run(args):
                     live_engine.run(ReadOnlyMarketData(mt5,cfg))  # SIMULATION ONLY · read-only feed, never the executor
                 except Exception as exc:
                     logging.warning('Live Test cycle skipped: %s', exc)
+                if signal_agent:
+                    try:signal_agent.update()
+                    except Exception as exc:logging.warning('Signal Agent cycle skipped: %s', exc)
             journal.refresh()
             if notifier:
                 try:notifier.check()

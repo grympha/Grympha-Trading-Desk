@@ -110,8 +110,9 @@ Runs any Live Test agent over MT5 history with the **same agent code and the sam
 logic** (monitoring, freshness gate, position cap, simulator fills and exits), so its R results mean
 the same as Live Test's — in minutes instead of weeks. Read-only and simulated: it gets a replayed
 market that serves only candles already closed at the simulated moment (no lookahead); each M1
-candle becomes four quotes (open, the two extremes in their likely order, close). Nothing is written
-to the dashboard database and no order API exists in it (guard test).
+candle becomes four quotes (open, the two extremes in their likely order, close). The only thing it
+writes to the dashboard database is the newest result per agent (`quant_results`, read by the Signal
+Agent; `--extra-spread-points` stress runs are not saved). No order API exists in it (guard test).
 
 ```
 python quant_agent.py --live --days 30                          # every live-strategy agent, all pairs
@@ -131,6 +132,27 @@ setup ids and entry prices (the rest were traded under the older 1R/2R target mo
 from M1 candles, not ticks; the M1 spread is often the minute's minimum (use `--extra-spread-points`);
 news blackouts, trade windows and the shared position cap are not modelled. Treat results as
 optimistic and confirm in Live Test before switching anything on live.
+
+## Signal Agent — graded setup feed (`signal_agent.py`)
+
+After every Live Test cycle the bot hands each new simulated entry to the Signal Agent, which grades it
+from the SAME agent's (strategy × pair × config) record **as it stood when the setup appeared**: the
+newest Quant Agent backtest (`quant_results`) plus the agent's closed, valid Live Test trades.
+
+| Grade | Rule |
+|---|---|
+| **A · Proven** | backtest verdict EDGE and Live Test not contradicting it (< 10 trades, or avg ≥ 0R); or Live Test alone earns EDGE (≥ 30 trades) |
+| **B · Promising** | ≥ 10 trades in total, combined average above +0.05R |
+| **X · Losing** | a LOSING verdict in either record, or ≥ 20 Live Test trades averaging below −0.15R |
+| **C · Unproven** | everything else |
+
+The grade is frozen, so the feed's outcome column and the per-grade totals show whether the grades
+themselves hold up. Shown in the dashboard's **Live Test** tab (Signal Agent table, filter by grade;
+`/api/signal-agent`). Optional Telegram alert for grade-A setups (Settings → Telegram, "Signal Agent ·
+grade A", off by default; only setups under 10 minutes old, never a backlog). The first run back-fills
+the last day without alerting. Simulation only: it reads the Live Test tables, writes `signal_feed`
+(newest 5 000 rows) and never reaches orders or the executor (guard test). Re-run the Quant Agent
+(`--live`) after changing strategy settings — a new config is a new agent id with no backtest yet.
 
 ## Other project references
 
