@@ -59,7 +59,7 @@ def save_settings(values: dict, path: Path = SETTINGS_FILE) -> None:
 def validate_real_account(login_text: str, server: str) -> tuple[int, str]:
     login_text, server = str(login_text).strip(), str(server).strip()
     if not login_text.isdigit() or int(login_text) <= 0:
-        raise ValueError('Account number must be digits only, e.g. 37369024.')
+        raise ValueError('Account number must be digits only, e.g. 12345678.')
     if not server or len(server) > 100:
         raise ValueError('Enter the broker server exactly as MT5 shows it, e.g. RoboForex-Pro.')
     return int(login_text), server

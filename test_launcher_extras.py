@@ -16,7 +16,7 @@ class LauncherExtras(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_real_account_validation(self):
-        self.assertEqual(lx.validate_real_account(' 37369024 ', ' RoboForex-Pro '), (37369024, 'RoboForex-Pro'))
+        self.assertEqual(lx.validate_real_account(' 12345678 ', ' RoboForex-Pro '), (12345678, 'RoboForex-Pro'))
         for login, server in [('', 'X'), ('12a', 'X'), ('0', 'X'), ('-5', 'X'), ('123', ''), ('123', '   ')]:
             with self.assertRaises(ValueError):
                 lx.validate_real_account(login, server)
@@ -24,12 +24,12 @@ class LauncherExtras(unittest.TestCase):
     def test_save_real_account_keeps_other_settings_and_backs_up(self):
         cfg = self.dir / 'config.json'
         cfg.write_text(json.dumps({'symbols': ['XAUUSD'], 'real_execution': {'account_login': None, 'account_server': '', 'max_positions': 6}}))
-        backup = lx.save_real_account(cfg, 37369024, 'RoboForex-Pro')
+        backup = lx.save_real_account(cfg, 12345678, 'RoboForex-Pro')
         data = json.loads(cfg.read_text())
-        self.assertEqual(data['real_execution'], {'account_login': 37369024, 'account_server': 'RoboForex-Pro', 'max_positions': 6})
+        self.assertEqual(data['real_execution'], {'account_login': 12345678, 'account_server': 'RoboForex-Pro', 'max_positions': 6})
         self.assertEqual(data['symbols'], ['XAUUSD'])
         self.assertIsNone(json.loads(backup.read_text())['real_execution']['account_login'])
-        self.assertEqual(lx.read_real_account(cfg), (37369024, 'RoboForex-Pro'))
+        self.assertEqual(lx.read_real_account(cfg), (12345678, 'RoboForex-Pro'))
         self.assertIs(type(data['real_execution']['account_login']), int)  # the executor requires an int
 
     def test_startup_entry_created_and_removed_in_given_folder(self):
