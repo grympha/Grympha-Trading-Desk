@@ -324,6 +324,42 @@ def load_results(store):
                                 created=r['created']) for r in rows}
 
 
+def report_view(store):
+    """Dashboard view: every saved backtest beside the same agent's Live Test record and status."""
+    results = load_results(store)
+    if not results:
+        return dict(status='WAITING', rows=[], note='No Quant Agent backtest yet. Run it from the project folder, '
+                    'e.g. "python quant_agent.py --live --days 30" (needs MT5 open; takes a few minutes).')
+    with store.connect() as db:
+        agents = {r['id']: r for r in db.execute('SELECT id, strategy_id, config, status FROM live_test_agents')}
+        trades = defaultdict(list)
+        for r in db.execute('SELECT agent_id, payload FROM live_test_trades'):
+            if r['agent_id'] in results:
+                trades[r['agent_id']].append(json.loads(r['payload']))
+    rows = []
+    for aid, b in results.items():
+        strategy_id, symbol = aid.split('|')[:2]
+        a = agents.get(aid)
+        label = strategy_id
+        if a is not None:
+            try:
+                label = build_agent(a['strategy_id'], json.loads(a['config'])).label()
+            except Exception:
+                pass
+        fwd = summarise(trades.get(aid, [])) if trades.get(aid) else None
+        rows.append(dict(agent_id=aid, strategy_id=strategy_id, symbol=symbol, label=label,
+                         agent_status=a['status'] if a is not None else 'REMOVED', backtest=b,
+                         forward=None if fwd is None else dict(trades=fwd['trades'], win_rate=fwd['win_rate'],
+                                                               net_r=fwd['net_r'], avg_r=fwd['avg_r'])))
+    rows.sort(key=lambda r: (-(r['backtest'].get('net_r') or 0), r['symbol']))
+    created = [b['created'] for b in results.values()]
+    counts = defaultdict(int)
+    for b in results.values():
+        counts[b['verdict']] += 1
+    return dict(status='OK', rows=rows, verdicts=dict(counts), last_run_epoch=max(created),
+                window_start=min(b['start'] for b in results.values()), window_end=max(b['end'] for b in results.values()))
+
+
 # --------------------------------------------------------------------------- reports
 def write_reports(results, folder: Path, start, end, extra_spread_points):
     folder.mkdir(parents=True, exist_ok=True)

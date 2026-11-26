@@ -161,6 +161,9 @@ def build_server(store, port=8765):
             if path=='/api/market-scout':
                 from market_scout import report_view
                 return self.send(json.dumps(report_view(store),allow_nan=False).encode(),'application/json')
+            if path=='/api/quant-agent':
+                from quant_agent import report_view as quant_view
+                return self.send(json.dumps(quant_view(store),allow_nan=False).encode(),'application/json')
             if path=='/api/signal-agent':
                 from signal_agent import report as signal_report
                 return self.send(json.dumps(signal_report(store),allow_nan=False).encode(),'application/json')

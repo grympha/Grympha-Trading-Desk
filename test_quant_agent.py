@@ -152,5 +152,34 @@ class Reports(unittest.TestCase):
         self.assertGreater(len(trades_path.read_text(encoding='utf-8').splitlines()), 10)
 
 
+class DashboardView(unittest.TestCase):
+    def test_backtests_sit_beside_the_live_test_record(self):
+        import json
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        store = Store(Path(tmp.name) / 'db.sqlite3')
+        LiveTestEngine(store)                                   # creates the Live Test tables
+        self.assertEqual(qa.report_view(store)['status'], 'WAITING')
+        stats = lambda rs: qa.summarise([dict(entry_time=T0 + i, pnl_r=r, data_quality_status=VALID) for i, r in enumerate(rs)])
+        win, lose = stats([1.0, 1.0, 1.0, 1.0, -1.0] * 10), stats([-1.0] * 40)
+        qa.save_results(store, [dict(strategy_id='TEST_AGENT', symbol='EURUSD', config_id='a', start=T0, end=T0 + 9,
+                                     stats=win, verdict=qa.verdict(win)),
+                                dict(strategy_id='TEST_AGENT', symbol='GONE', config_id='b', start=T0 - 5, end=T0 + 9,
+                                     stats=lose, verdict=qa.verdict(lose))], now=T0 + 100)
+        with store.connect() as db:
+            db.execute('INSERT INTO live_test_agents VALUES (?,?,?,?,?,?,?,?)',
+                       ('TEST_AGENT|EURUSD|a', 'TEST_AGENT', 'EURUSD', 'a', '{}', 'RUNNING', '{}', T0))
+            for i, r in enumerate((2.0, -1.0, -1.0)):
+                db.execute('INSERT INTO live_test_trades VALUES (?,?,?,?)', (f't{i}', 'TEST_AGENT|EURUSD|a', T0 + i,
+                           json.dumps(dict(entry_time=T0 + i, pnl_r=r, data_quality_status=VALID))))
+        v = qa.report_view(store)
+        json.dumps(v, allow_nan=False)                           # what the dashboard serves
+        self.assertEqual([r['symbol'] for r in v['rows']], ['EURUSD', 'GONE'])     # best net R first
+        live, gone = v['rows']
+        self.assertEqual((live['agent_status'], live['forward']['trades'], live['forward']['net_r']), ('RUNNING', 3, 0.0))
+        self.assertEqual((gone['agent_status'], gone['forward']), ('REMOVED', None))
+        self.assertEqual(v['verdicts'], {'EDGE (keep testing live)': 1, 'LOSING (switch off)': 1})
+        self.assertEqual((v['window_start'], v['last_run_epoch']), (T0 - 5, T0 + 100))
+
+
 if __name__ == '__main__':
     unittest.main()

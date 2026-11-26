@@ -119,6 +119,8 @@ market that serves only candles already closed at the simulated moment (no looka
 candle becomes four quotes (open, the two extremes in their likely order, close). The only thing it
 writes to the dashboard database is the newest result per agent (`quant_results`, read by the Signal
 Agent; `--extra-spread-points` stress runs are not saved). No order API exists in it (guard test).
+Dashboard → **Quant Agent** tab (`/api/quant-agent`) shows every saved backtest beside the same
+agent's Live Test record and status, filterable by verdict and strategy.
 
 ```
 python quant_agent.py --live --days 30                          # every live-strategy agent, all pairs
