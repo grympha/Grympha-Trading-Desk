@@ -64,16 +64,16 @@ function equityChart(series,o){
  let line='',bal='';
  series.forEach((pt,i)=>{const X=p(x(pt.t)),Y=p(y(pt.v));if(!i)line+=`M${X} ${Y}`;else if(o.step)line+=`H${X}V${Y}`;else line+=`L${X} ${Y}`;if(o.balance&&Number.isFinite(pt.b))bal+=(bal?'L':'M')+X+' '+p(y(pt.b));});
  const floor=o.base!=null?y(Math.max(lo,Math.min(hi,o.base))):T+ph;
- let svg=`<svg class="equity-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Equity curve"><defs><linearGradient id="eq-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".28"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs><rect width="${W}" height="${H}" fill="#0e1925"/>`;
- const gs=niceStep(hi-lo,5);for(let v=Math.ceil(lo/gs)*gs;v<=hi;v+=gs)svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(v))}" y2="${p(y(v))}" stroke="#1c2a3a"/><text x="${L+pw+6}" y="${p(y(v)+4)}" fill="#6f829a" font-size="11">${fmt(v,v%1?2:0)}</text>`;
- const span=t1-t0,ticks=W<600?3:5;for(let i=0;i<=ticks;i++){const t=t0+span*i/ticks,d=new Date(t*1000),label=span>2*86400?d.toLocaleDateString(undefined,{day:'numeric',month:'short'}):d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});svg+=`<text x="${p(Math.min(L+pw-20,Math.max(L+20,x(t))))}" y="${H-8}" fill="#6f829a" font-size="11" text-anchor="middle">${esc(label)}</text>`;}
- if(o.base!=null&&o.base>lo&&o.base<hi)svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(o.base))}" y2="${p(y(o.base))}" stroke="#4b5d72" stroke-dasharray="3 3"/>`;
+ let svg=`<svg class="equity-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Equity curve"><defs><linearGradient id="eq-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".28"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs><rect width="${W}" height="${H}" fill="#0e251f"/>`;
+ const gs=niceStep(hi-lo,5);for(let v=Math.ceil(lo/gs)*gs;v<=hi;v+=gs)svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(v))}" y2="${p(y(v))}" stroke="#1c3a33"/><text x="${L+pw+6}" y="${p(y(v)+4)}" fill="#6f9a8f" font-size="11">${fmt(v,v%1?2:0)}</text>`;
+ const span=t1-t0,ticks=W<600?3:5;for(let i=0;i<=ticks;i++){const t=t0+span*i/ticks,d=new Date(t*1000),label=span>2*86400?d.toLocaleDateString(undefined,{day:'numeric',month:'short'}):d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});svg+=`<text x="${p(Math.min(L+pw-20,Math.max(L+20,x(t))))}" y="${H-8}" fill="#6f9a8f" font-size="11" text-anchor="middle">${esc(label)}</text>`;}
+ if(o.base!=null&&o.base>lo&&o.base<hi)svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(o.base))}" y2="${p(y(o.base))}" stroke="#4b7268" stroke-dasharray="3 3"/>`;
  svg+=`<path d="${line}V${p(floor)}H${p(x(t0))}Z" fill="url(#eq-fill)"/>`;
- if(bal)svg+=`<path d="${bal}" fill="none" stroke="#9fb3c8" stroke-opacity=".6" stroke-dasharray="5 4" stroke-width="1.2"/>`;
+ if(bal)svg+=`<path d="${bal}" fill="none" stroke="#9fc8be" stroke-opacity=".6" stroke-dasharray="5 4" stroke-width="1.2"/>`;
  svg+=`<path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>`;
  if(o.step)series.forEach(pt=>{if(pt.trade!=null)svg+=`<circle cx="${p(x(pt.t))}" cy="${p(y(pt.v))}" r="3" fill="${pt.trade>=0?'#5ee0be':'#e08797'}"/>`;});
- const lastPt=series.at(-1);svg+=`<rect x="${L+pw+2}" y="${p(y(lastPt.v)-8)}" width="${R-4}" height="16" rx="3" fill="${col}"/><text x="${L+pw+6}" y="${p(y(lastPt.v)+4)}" fill="#0b131d" font-size="10.5" font-weight="700">${fmt(lastPt.v,2)}</text>`;
- svg+=`<g id="eq-cross" visibility="hidden" pointer-events="none"><line id="eq-cross-x" y1="${T}" y2="${T+ph}" stroke="#8aa0b8" stroke-dasharray="3 3"/><circle id="eq-cross-dot" r="4" fill="${col}" stroke="#0e1925" stroke-width="2"/></g></svg><div class="chart-tip hidden" id="equity-tip" role="status"></div>`;
+ const lastPt=series.at(-1);svg+=`<rect x="${L+pw+2}" y="${p(y(lastPt.v)-8)}" width="${R-4}" height="16" rx="3" fill="${col}"/><text x="${L+pw+6}" y="${p(y(lastPt.v)+4)}" fill="#0b1d18" font-size="10.5" font-weight="700">${fmt(lastPt.v,2)}</text>`;
+ svg+=`<g id="eq-cross" visibility="hidden" pointer-events="none"><line id="eq-cross-x" y1="${T}" y2="${T+ph}" stroke="#8ab8ac" stroke-dasharray="3 3"/><circle id="eq-cross-dot" r="4" fill="${col}" stroke="#0e251f" stroke-width="2"/></g></svg><div class="chart-tip hidden" id="equity-tip" role="status"></div>`;
  equityGeom={series,W,H,x,y,L,pw,T,ph,cur:o.cur,step:o.step,balance:o.balance};
  return svg;
 }

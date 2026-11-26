@@ -57,12 +57,12 @@ function candleChart(all,d,symbol,o={}){
  let lo=Math.min(...vals),hi=Math.max(...vals);const pad=(hi-lo||Math.abs(hi)*.001||1)*.06;lo-=pad;hi+=pad;
  const y=v=>T+(hi-v)/(hi-lo)*ph,step=pw/bars.length,cx=i=>L+(i+.5)*step,bw=Math.max(1,Math.min(16,step*.64));
  const p=v=>v.toFixed(1),price=v=>fmt(v,dg);
- let svg=`<svg class="candles" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(symbol)} ${esc(o.tf||'')} candlestick chart with trade levels"><rect width="${W}" height="${H}" fill="#0e1925"/>`;
+ let svg=`<svg class="candles" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(symbol)} ${esc(o.tf||'')} candlestick chart with trade levels"><rect width="${W}" height="${H}" fill="#0e251f"/>`;
  // price grid + right axis
- const gs=niceStep(hi-lo,6);for(let v=Math.ceil(lo/gs)*gs;v<=hi;v+=gs){svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(v))}" y2="${p(y(v))}" stroke="#1c2a3a"/><text x="${L+pw+6}" y="${p(y(v)+4)}" fill="#6f829a" font-size="11">${price(v)}</text>`;}
+ const gs=niceStep(hi-lo,6);for(let v=Math.ceil(lo/gs)*gs;v<=hi;v+=gs){svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(v))}" y2="${p(y(v))}" stroke="#1c3a33"/><text x="${L+pw+6}" y="${p(y(v)+4)}" fill="#6f9a8f" font-size="11">${price(v)}</text>`;}
  // time axis
  const every=Math.max(1,Math.round(bars.length/(narrow?4:7))),daily=['H4','D1'].includes(o.tf);
- bars.forEach((b,i)=>{if(i%every)return;const t=new Date(b.time*1000);const label=daily||t.getHours()===0&&t.getMinutes()===0?t.toLocaleDateString(undefined,{day:'numeric',month:'short'}):t.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});svg+=`<line x1="${p(cx(i))}" x2="${p(cx(i))}" y1="${T}" y2="${T+ph}" stroke="#16222f"/><text x="${p(Math.max(L+24,Math.min(L+pw-24,cx(i))))}" y="${H-9}" fill="#6f829a" font-size="11" text-anchor="middle">${esc(label)}</text>`;});
+ bars.forEach((b,i)=>{if(i%every)return;const t=new Date(b.time*1000);const label=daily||t.getHours()===0&&t.getMinutes()===0?t.toLocaleDateString(undefined,{day:'numeric',month:'short'}):t.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});svg+=`<line x1="${p(cx(i))}" x2="${p(cx(i))}" y1="${T}" y2="${T+ph}" stroke="#162f29"/><text x="${p(Math.max(L+24,Math.min(L+pw-24,cx(i))))}" y="${H-9}" fill="#6f9a8f" font-size="11" text-anchor="middle">${esc(label)}</text>`;});
  // Bollinger Bands
  if(o.bands){
   const path=k=>{let s='',open=false;bars.forEach((b,i)=>{if(fin(b[k])){s+=(open?'L':'M')+p(cx(i))+' '+p(y(b[k]));open=true;}else open=false;});return s;};
@@ -72,15 +72,15 @@ function candleChart(all,d,symbol,o={}){
  }
  // candles
  bars.forEach((b,i)=>{const up=b.close>=b.open,c=up?'#5ee0be':'#e08797',top=y(Math.max(b.open,b.close)),h=Math.max(1,Math.abs(y(b.open)-y(b.close)));
-  svg+=`<line x1="${p(cx(i))}" x2="${p(cx(i))}" y1="${p(y(b.high))}" y2="${p(y(b.low))}" stroke="${c}" stroke-width="1.2"/><rect x="${p(cx(i)-bw/2)}" y="${p(top)}" width="${p(bw)}" height="${p(h)}" fill="${up?'#0e1925':c}" stroke="${c}" stroke-width="1.2"/>`;});
+  svg+=`<line x1="${p(cx(i))}" x2="${p(cx(i))}" y1="${p(y(b.high))}" y2="${p(y(b.low))}" stroke="${c}" stroke-width="1.2"/><rect x="${p(cx(i)-bw/2)}" y="${p(top)}" width="${p(bw)}" height="${p(h)}" fill="${up?'#0e251f':c}" stroke="${c}" stroke-width="1.2"/>`;});
  // trade levels + live price, labels de-overlapped in the right gutter
  const tags=levels.map(([k,v])=>({k,v,c:k==='SL'?'#e08797':k.startsWith('TP')?'#5ee0be':k==='Fill'?'#71b9ff':'#e9bc75',dash:'6 4'}));
- if(fin(o.bid))tags.push({k:'Bid',v:o.bid,c:'#c9d6e4',dash:'2 3'});
+ if(fin(o.bid))tags.push({k:'Bid',v:o.bid,c:'#c9e4dd',dash:'2 3'});
  tags.sort((a,b)=>y(a.v)-y(b.v));let last=-1e9;
  for(const t of tags){t.ly=Math.max(y(t.v),last+17);last=t.ly;}
- for(const t of tags){const ly=Math.min(t.ly,T+ph-2);svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(t.v))}" y2="${p(y(t.v))}" stroke="${t.c}" stroke-dasharray="${t.dash}" stroke-opacity=".9"/><rect x="${L+pw+2}" y="${p(ly-8)}" width="${R-4}" height="16" rx="3" fill="${t.c}"/><text x="${L+pw+6}" y="${p(ly+4)}" fill="#0b131d" font-size="10.5" font-weight="700">${esc(t.k)} ${price(t.v)}</text>`;}
+ for(const t of tags){const ly=Math.min(t.ly,T+ph-2);svg+=`<line x1="${L}" x2="${L+pw}" y1="${p(y(t.v))}" y2="${p(y(t.v))}" stroke="${t.c}" stroke-dasharray="${t.dash}" stroke-opacity=".9"/><rect x="${L+pw+2}" y="${p(ly-8)}" width="${R-4}" height="16" rx="3" fill="${t.c}"/><text x="${L+pw+6}" y="${p(ly+4)}" fill="#0b1d18" font-size="10.5" font-weight="700">${esc(t.k)} ${price(t.v)}</text>`;}
  // crosshair (positioned on hover)
- svg+=`<g id="chart-cross" visibility="hidden" pointer-events="none"><line id="cross-x" y1="${T}" y2="${T+ph}" stroke="#8aa0b8" stroke-dasharray="3 3"/><line id="cross-y" x1="${L}" x2="${L+pw}" stroke="#8aa0b8" stroke-dasharray="3 3"/><rect id="cross-tag" x="${L+pw+2}" width="${R-4}" height="16" rx="3" fill="#2c3e53"/><text id="cross-price" x="${L+pw+6}" fill="#e8eef5" font-size="10.5"></text></g></svg><div class="chart-tip hidden" id="chart-tip" role="status"></div>`;
+ svg+=`<g id="chart-cross" visibility="hidden" pointer-events="none"><line id="cross-x" y1="${T}" y2="${T+ph}" stroke="#8ab8ac" stroke-dasharray="3 3"/><line id="cross-y" x1="${L}" x2="${L+pw}" stroke="#8ab8ac" stroke-dasharray="3 3"/><rect id="cross-tag" x="${L+pw+2}" width="${R-4}" height="16" rx="3" fill="#2c5349"/><text id="cross-price" x="${L+pw+6}" fill="#e8f5f2" font-size="10.5"></text></g></svg><div class="chart-tip hidden" id="chart-tip" role="status"></div>`;
  chartGeom={bars,W,H,L,T,pw,ph,step,lo,hi,dg,cx};
  return svg;
 }
@@ -119,7 +119,7 @@ function levelChart(bars,d,symbol){
  const levels=[['Plan',d.reference],['Fill',d.actual_entry],['SL',d.actual_sl??d.sl],['TP1',d.tp1],['TP2',d.actual_tp??d.tp2]].filter(([k,v])=>Number.isFinite(v)&&v>0);
  let lo=Math.min(...bars.map(b=>b.low),...levels.map(v=>v[1])),hi=Math.max(...bars.map(b=>b.high),...levels.map(v=>v[1]));const pad=(hi-lo||1)*.08;lo-=pad;hi+=pad;
  const W=850,H=310,y=v=>20+(hi-v)/(hi-lo)*250,xx=i=>12+(i+.5)*720/bars.length;
- let svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(symbol)} MT5 candles and trade levels"><rect width="850" height="310" fill="#101c2a"/>`;
+ let svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(symbol)} MT5 candles and trade levels"><rect width="850" height="310" fill="#102a24"/>`;
  bars.forEach((b,i)=>{const color=b.close>=b.open?'#5ee0be':'#e08797';svg+=`<line x1="${xx(i)}" x2="${xx(i)}" y1="${y(b.high)}" y2="${y(b.low)}" stroke="${color}"/><rect x="${xx(i)-2}" y="${y(Math.max(b.open,b.close))}" width="4" height="${Math.max(1,Math.abs(y(b.open)-y(b.close)))}" fill="${color}"/>`;});
  levels.forEach(([k,v],i)=>{const c=k==='SL'?'#e08797':k.startsWith('TP')?'#5ee0be':k==='Fill'?'#71b9ff':'#e9bc75';svg+=`<line x1="12" x2="740" y1="${y(v)}" y2="${y(v)}" stroke="${c}" stroke-dasharray="5 4"/><text x="746" y="${y(v)+4}" fill="${c}" font-size="11">${esc(k)} ${Number(v).toPrecision(7)}</text>`;});
  svg+=`<text x="14" y="300" fill="#dce7f4" font-size="11">${esc(symbol)} · MT5 candle snapshot ${date(bars.at(-1)?.time,true)}</text></svg>`;return svg;
