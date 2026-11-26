@@ -77,14 +77,14 @@ all**. The tab auto-renders any registered agent, so all of them appear automati
 | 9 | **AMD Power of Three** (`AMD_PO3`, models C1/A1/B1) | M5 (H1 context) | XAUUSD | Market Cycle Guide model C1 — 06:00-06:55 UTC range, H1 pivot context frozen at 07:00, failed-breakout sweep → reclaim → origin confirm → retest; SL beyond the sweep extreme, TP inside the opposite boundary, ≥1.5 R:R, 10:00 UTC cutoff. A1 enters on the reclaim, B1 on the confirm (no retest) |
 | 10 | **BBMA live** (`LIVE_BBMA`, one agent per setup: CSA re-entry / Momentum re-entry / MHV reversal) | M5 (H1, M15) | BBMA pairs | the **live BBMA strategy**, simulated: calls `bbma_bot.assess` with the same frames and settings as the scanner (structural TP with runner); STOP entry at the trigger until expiry; TP = TP2; 50 % partial + break-even +50 pts at TP1; trail 1R from +1R |
 | 11 | **Confluence live** (`LIVE_CONFLUENCE`) | M15 (H1, H4) | Confluence pairs | the **live Five-factor Confluence strategy**, simulated: calls `confluence_strategy.evaluate`; score ≥ live minimum (4/5) enters at market once per M15 close; SL 1.5 ATR, TP = TP2 3.5 ATR; 50 % partial + break-even at TP1 (2 ATR); trail 1R from +1R |
+| 12 | **ORB live** (`LIVE_ORB`) | M5 (H4 trend) | XAUUSD | the **live ORB strategy**, simulated: calls `orb_core.scan` (01:00–06:00 server range, breakout + retest, trades 07:00–17:00, Wed/Thu/December skipped) and the live `ORBRunner.plan` (fixed 2R); 1 signal per session; market entry within the 60 s signal window; 50 % partial + break-even at TP1 (1R); trail 1R from +1R |
 
-Agents 10–11 exist to judge each **live strategy × setup × pair** on R, without money, the shared
+Agents 10–12 exist to judge each **live strategy × setup × pair** on R, without money, the shared
 position cap or skipped signals, before switching combinations off in **Pairs on / off** and
 **Strategy setups**. Their analysis settings are copied from `config.json` at registration (a
-config change registers new agents); management mirrors the dashboard settings of 2026-11-26.
+config change registers new agents); management and the ORB dashboard settings mirror those of 2026-11-26.
 Not modelled: news blackouts, trade windows, the shared position cap and live polling delays.
-The live ORB (01:00–06:00 server range, `orb_strategy.py`) is a different strategy from agent 3
-and has no Live Test agent yet.
+Agent 12 (live ORB, `orb_strategy.py`) and agent 3 (Gold ORB 09:30 New York) are different strategies.
 
 All agents use closed candles for structure, a shared min-R:R gate (`RR_TOO_LOW`), per-symbol
 tick/point profiles and per agent × symbol × config state. One offline symbol never blocks the

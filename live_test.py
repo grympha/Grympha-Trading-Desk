@@ -1246,6 +1246,12 @@ def build_agent(strategy_id, config):
             return LiveConfluence(config)
         except Exception:
             return None
+    if strategy_id == 'LIVE_ORB':
+        try:
+            from live_test_live_orb import LiveORB
+            return LiveORB(config)
+        except Exception:
+            return None
     return None
 
 
@@ -1331,3 +1337,10 @@ def ensure_default_agents(engine, cfg=None):
     conf_symbols = (cfg.get('confluence') or {}).get('symbols') or cfg.get('symbols') or []
     for base in live_test_symbols({'symbols': conf_symbols}) if conf_symbols else []:
         _reg(LiveConfluence.from_live_config(cfg), base)
+    # The live ORB (01:00-06:00 server range) — XAUUSD only, like orb_core v1.
+    try:
+        from live_test_live_orb import LiveORB
+    except Exception:
+        return
+    if 'XAUUSD' in ((cfg.get('orb') or {}).get('symbols') or ['XAUUSD']):
+        _reg(LiveORB.from_live_config(cfg), 'XAUUSD')
