@@ -90,6 +90,15 @@ same at the next bot start.
 Not modelled: news blackouts, trade windows, the shared position cap and live polling delays.
 Agent 12 (live ORB, `orb_strategy.py`) and agent 3 (Gold ORB 09:30 New York) are different strategies.
 
+**Live-Test-only pairs.** `live_test_extra_symbols` in `config.json` adds pairs to every Live Test
+agent family (core, structure, BBMA live, Confluence live) **without** adding them to live trading —
+the live scanners and executor keep reading `symbols` / `confluence.symbols`. Takes effect at the next
+bot start. Each pair adds 15 agents. German and US index CFDs have their own session hours in
+`market_hours.py` (DE40 08:00–21:55 Frankfurt; US30/US500/USTECH closed 16:15–20:00 New York), so their
+closed hours count as market closed, not data gaps; JP225 and metals follow the forex schedule.
+Example (RoboForex names): `["XAUEUR", ".DE40Cash", ".USTECHCash", ".JP225Cash", ".US30Cash",
+".US500Cash", "GBPAUD", "EURJPY", "AUDJPY"]`.
+
 All agents use closed candles for structure, a shared min-R:R gate (`RR_TOO_LOW`), per-symbol
 tick/point profiles and per agent × symbol × config state. One offline symbol never blocks the
 others. See each `live_test_*.py` module and its `test_live_test_*.py` suite, plus

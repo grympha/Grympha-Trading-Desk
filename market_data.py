@@ -34,6 +34,25 @@ class ReadOnlyMarketData:
         self._mt5 = mt5
         self.cfg = cfg or {}
         self._resolved = {}
+        # Per-sample memo: the engine asks every agent at the SAME `now`, so agents sharing a pair
+        # share one MT5 read per quote / candle request. Only explicit `now` values are cached and
+        # the bot builds a new adapter every cycle, so data is never older than the cycle.
+        self._memo = {}
+
+    def _remember(self, key, read):
+        if key[-1] is None:
+            return read()
+        if key not in self._memo:
+            if len(self._memo) > 4000:
+                self._memo.clear()
+            try:
+                self._memo[key] = (True, read())
+            except Exception as exc:          # a closed/stale market is answered the same way for all
+                self._memo[key] = (False, exc)
+        ok, value = self._memo[key]
+        if not ok:
+            raise value
+        return list(value) if isinstance(value, list) else value
 
     # ---- connection --------------------------------------------------------
     def connected(self) -> bool:
@@ -80,6 +99,9 @@ class ReadOnlyMarketData:
 
     # ---- quote (read-only) -------------------------------------------------
     def quote(self, symbol: str, now: float | None = None, max_age: float | None = None) -> Quote:
+        return self._remember(('quote', symbol, max_age, now), lambda: self._read_quote(symbol, now, max_age))
+
+    def _read_quote(self, symbol, now, max_age):
         now = time.time() if now is None else now
         if not self._mt5.symbol_select(symbol, True):
             raise ValueError('Symbol cannot be selected')
@@ -103,6 +125,10 @@ class ReadOnlyMarketData:
 
     # ---- candles (read-only, closed bars only) -----------------------------
     def candles(self, symbol: str, timeframe: str, count: int, now: float | None = None) -> list[Bar]:
+        return self._remember(('candles', symbol, timeframe, count, now),
+                              lambda: self._read_candles(symbol, timeframe, count, now))
+
+    def _read_candles(self, symbol, timeframe, count, now):
         now = time.time() if now is None else now
         tf = _TF.get(timeframe)
         if tf is None:

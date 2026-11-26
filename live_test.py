@@ -12,7 +12,9 @@ entry-to-initial-SL distance. Spread is embedded once via the bid/ask fill basis
 from __future__ import annotations
 import hashlib
 import json
+import logging
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -871,6 +873,7 @@ class LiveTestEngine:
         self.store = store
         self.max_gap_default = max_gap_default
         self.agents: dict[str, LiveAgent] = {}
+        self._batch = None          # shared connection while run() writes a whole cycle
         with store.connect() as db:
             db.executescript(SCHEMA)
         self._load()
@@ -893,8 +896,19 @@ class LiveTestEngine:
         return la
 
     # ---- persistence ----
+    @contextmanager
+    def _db(self):
+        """The cycle's shared connection inside run() (one commit per cycle instead of one per
+        agent: ~25 ms each with hundreds of agents), otherwise a connection of its own."""
+        batch = getattr(self, '_batch', None)
+        if batch is not None:
+            yield batch
+        else:
+            with self.store.connect() as db:
+                yield db
+
     def _save_agent(self, la):
-        with self.store.connect() as db:
+        with self._db() as db:
             db.execute('INSERT OR REPLACE INTO live_test_agents VALUES (?,?,?,?,?,?,?,?)',
                        (la.id, la.agent.strategy_id, la.base_symbol, la.agent.config_id,
                         json.dumps(la.agent.config), la.status,
@@ -903,7 +917,7 @@ class LiveTestEngine:
                         time.time()))
 
     def _save_position(self, pos):
-        with self.store.connect() as db:
+        with self._db() as db:
             if pos['status'] == 'CLOSED':
                 db.execute('DELETE FROM live_test_positions WHERE trade_id=?', (pos['trade_id'],))
                 db.execute('INSERT OR REPLACE INTO live_test_trades VALUES (?,?,?,?)',
@@ -920,7 +934,7 @@ class LiveTestEngine:
         events = la.state.pop('_emit', None)
         if not events:
             return
-        with self.store.connect() as db:
+        with self._db() as db:
             for ev in events:
                 rec = dict(ev, agent_id=la.id, strategy_id=la.agent.strategy_id,
                            config_id=la.agent.config_id, base_symbol=la.base_symbol)
@@ -987,11 +1001,20 @@ class LiveTestEngine:
         now = time.time() if now is None else now
         self._sync()
         touched = 0
-        for la in list(self.agents.values()):
-            if la.status != 'RUNNING':
-                continue
-            touched += 1
-            self._run_agent(la, market, now)
+        with self.store.connect() as db:            # one transaction for the whole cycle
+            self._batch = db
+            try:
+                for la in list(self.agents.values()):
+                    if la.status != 'RUNNING':
+                        continue
+                    touched += 1
+                    try:
+                        self._run_agent(la, market, now)
+                    except Exception as exc:        # one broken agent never costs the others their cycle
+                        la.state['_run_note'] = str(exc)[:200]
+                        logging.warning('Live Test agent %s skipped this cycle: %s', la.id, exc)
+            finally:
+                self._batch = None
         return touched
 
     def _run_agent(self, la, market, now):
@@ -1259,13 +1282,21 @@ CORE_AGENTS = (PrevCandleBreakoutH1, CounterTrendScalper, CmsSupportResistanceFl
                CmsFakeoutV1, CmsSupplyDemand, CmsSsr)
 
 
+def live_test_extra_symbols(cfg):
+    """`live_test_extra_symbols` in config: pairs tested in Live Test ONLY. They are never added to the
+    live scanners or the executor (those read `symbols` / `confluence.symbols`)."""
+    raw = (cfg or {}).get('live_test_extra_symbols') or []
+    return [s for s in raw if isinstance(s, str) and s] if isinstance(raw, list) else []
+
+
 def live_test_symbols(cfg):
     """Pairs the default agents run on. `live_test_symbols` in config overrides; otherwise the
-    dashboard's configured pairs (`symbols`); otherwise XAUUSD. XAUUSD is listed first, de-duped."""
+    dashboard's configured pairs (`symbols`); otherwise XAUUSD. Then `live_test_extra_symbols`
+    (Live Test only) is appended. XAUUSD is listed first, de-duped."""
     cfg = cfg or {}
-    raw = cfg.get('live_test_symbols') or cfg.get('symbols') or ['XAUUSD']
+    raw = list(cfg.get('live_test_symbols') or cfg.get('symbols') or ['XAUUSD']) + live_test_extra_symbols(cfg)
     out = []
-    for s in (['XAUUSD'] if 'XAUUSD' in raw else []) + list(raw):
+    for s in (['XAUUSD'] if 'XAUUSD' in raw else []) + raw:
         if isinstance(s, str) and s and s not in out:
             out.append(s)
     return out
@@ -1340,11 +1371,13 @@ def live_strategy_agents(cfg, store=None):
     from live_test_live_orb import LiveORB
     cfg = cfg or {}
     settings = dashboard_settings(store, cfg) if store is not None else None
+    extra = live_test_extra_symbols(cfg)          # Live Test only: simulated, never traded live
     out = []
-    for base in live_test_symbols({'symbols': cfg['symbols']}) if cfg.get('symbols') else []:
+    bbma_symbols = list(cfg.get('symbols') or []) + extra
+    for base in live_test_symbols({'symbols': bbma_symbols}) if bbma_symbols else []:
         for setup in SETUP_LABELS:
             out.append((LiveBBMA.from_live_config(cfg, setup, settings), base))
-    conf_symbols = (cfg.get('confluence') or {}).get('symbols') or cfg.get('symbols') or []
+    conf_symbols = list((cfg.get('confluence') or {}).get('symbols') or cfg.get('symbols') or []) + extra
     for base in live_test_symbols({'symbols': conf_symbols}) if conf_symbols else []:
         out.append((LiveConfluence.from_live_config(cfg, settings), base))
     if 'XAUUSD' in ((cfg.get('orb') or {}).get('symbols') or ['XAUUSD']):

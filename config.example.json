@@ -109,5 +109,6 @@
     "every_hours": 24,
     "keep": 14,
     "folder": "backups"
-  }
+  },
+  "live_test_extra_symbols": []
 }

@@ -37,9 +37,67 @@ def new_york_offset(utc: datetime) -> int:
     return -4 if start <= utc < end else -5
 
 
-def status(now: float | None = None) -> tuple[str, float | None]:
-    """('open' | 'weekend' | 'rollover', epoch when quotes are expected again or None)."""
-    utc = datetime.fromtimestamp(time.time() if now is None else now, timezone.utc)
+def _last_sunday(year, month):
+    d = datetime(year, month + 1, 1, tzinfo=timezone.utc) if month < 12 else datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    d -= timedelta(days=1)
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def frankfurt_offset(utc: datetime) -> int:
+    """+2 (CEST) between the last Sunday of March 01:00 UTC and the last Sunday of October 01:00 UTC, else +1."""
+    start = _last_sunday(utc.year, 3) + timedelta(hours=1)
+    end = _last_sunday(utc.year, 10) + timedelta(hours=1)
+    return 2 if start <= utc < end else 1
+
+
+# Index CFDs keep exchange-linked hours (measured from RoboForex M5 history, Nov 2026):
+#   German index  : trades 08:00-21:55 Frankfurt, Monday-Friday
+#   US indices    : closed 16:15-20:00 New York every day, weekend Fri 16:15 -> Sun 20:00
+#   Japan 225, metals, forex: the New York 17:00 schedule below.
+INDEX_PREFIXES = {'DE40': 'DE', 'GER40': 'DE', 'DAX': 'DE',
+                  'US30': 'US', 'US500': 'US', 'USTECH': 'US', 'NAS100': 'US', 'SPX500': 'US', 'US100': 'US'}
+
+
+def index_market(symbol: str | None) -> str | None:
+    """'DE' / 'US' for index CFDs with their own session hours, else None (broker prefix '.' ignored)."""
+    if not symbol:
+        return None
+    name = str(symbol).upper().lstrip('.#')
+    return next((m for p, m in INDEX_PREFIXES.items() if name.startswith(p)), None)
+
+
+def _index_status(utc: datetime, market: str) -> str:
+    if market == 'DE':
+        local = utc + timedelta(hours=frankfurt_offset(utc))
+        minutes, wd = local.hour * 60 + local.minute, local.weekday()
+        if wd < 5 and 8 * 60 <= minutes < 21 * 60 + 55:
+            return 'open'
+        return 'weekend' if (wd == 4 and minutes >= 21 * 60 + 55) or wd >= 5 or (wd == 0 and minutes < 8 * 60) else 'session'
+    local = utc + timedelta(hours=new_york_offset(utc))
+    minutes, wd = local.hour * 60 + local.minute, local.weekday()
+    if (wd == 4 and minutes >= 16 * 60 + 15) or wd == 5 or (wd == 6 and minutes < 20 * 60):
+        return 'weekend'
+    return 'session' if 16 * 60 + 15 <= minutes < 20 * 60 else 'open'
+
+
+def _next_open(now: float, symbol: str | None) -> float | None:
+    """First 5-minute step within 4 days when the market is open again."""
+    for k in range(1, 4 * 288 + 1):
+        t = now + k * 300
+        if status(t, symbol)[0] == 'open':
+            return t - (t % 300)
+    return None
+
+
+def status(now: float | None = None, symbol: str | None = None) -> tuple[str, float | None]:
+    """('open' | 'weekend' | 'rollover' | 'session', epoch when quotes are expected again or None).
+    Without a symbol (or for forex/metals/Japan 225) the New York 17:00 forex schedule applies;
+    German and US index CFDs use their own session hours ('session' = outside today's session)."""
+    now = time.time() if now is None else now
+    utc = datetime.fromtimestamp(now, timezone.utc)
+    market = index_market(symbol)
+    if market:
+        return _index_status(utc, market), None
     ny = utc + timedelta(hours=new_york_offset(utc))
     minutes = ny.hour * 60 + ny.minute
     wd = ny.weekday()  # Mon=0 .. Sun=6
@@ -69,27 +127,32 @@ def unexplained_gap_seconds(start: float, end: float, symbol: str | None = None,
     missing, t = 0.0, float(start)
     while t < end:
         seg = min(step, end - t)
-        if status(t + seg / 2)[0] == 'open':
+        if status(t + seg / 2, symbol)[0] == 'open':
             missing += seg
         t += seg
     return missing
 
 
-def describe(now: float | None = None) -> str | None:
+def describe(now: float | None = None, symbol: str | None = None) -> str | None:
     """Human message for a closed market, with the reopening time in the PC's local time."""
-    state, reopen = status(now)
+    now = time.time() if now is None else now
+    state, reopen = status(now, symbol)
     if state == 'open':
         return None
-    when = time.strftime('%a %d %b %H:%M', time.localtime(reopen))
+    if reopen is None:
+        reopen = _next_open(now, symbol)
+    when = time.strftime('%a %d %b %H:%M', time.localtime(reopen)) if reopen else 'later'
     if state == 'weekend':
         return f'Market closed for the weekend · reopens {when} (your time)'
+    if state == 'session':
+        return f'Index outside its trading session · reopens {when} (your time)'
     return f'Daily rollover break · quotes resume about {when} (your time)'
 
 
 def check_stale(age_seconds: float, limit_seconds: float, now: float | None = None, symbol: str | None = None) -> None:
     """Raise MarketClosed if a stale quote is explained by market hours; otherwise do nothing."""
     if age_seconds > limit_seconds and not trades_24_7(symbol):
-        message = describe(now)
+        message = describe(now, symbol)
         if message:
             raise MarketClosed(f'{message} · last quote {age_seconds / 3600:.1f} h ago')
 
