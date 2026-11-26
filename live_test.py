@@ -1413,8 +1413,13 @@ def sync_live_strategy_agents(engine, cfg):
         if aid in engine.agents:
             continue
         slot = _live_slot(agent.strategy_id, base, agent.config)
-        running = any(la.status == 'RUNNING' for la in current
-                      if _live_slot(la.agent.strategy_id, la.base_symbol, la.agent.config) == slot)
+        versions = [la for la in current if _live_slot(la.agent.strategy_id, la.base_symbol, la.agent.config) == slot]
+        if versions:
+            running = any(la.status == 'RUNNING' for la in versions)
+        else:
+            # a brand-new slot (a pair just added to config) follows the pair's other agents
+            running = any(la.status == 'RUNNING' for la in engine.agents.values()
+                          if la.base_symbol == base and la.agent.strategy_id not in LIVE_STRATEGY_IDS)
         engine.register(agent, base, 'RUNNING' if running else 'PAUSED')
         changed.append(aid)
     for la in current:

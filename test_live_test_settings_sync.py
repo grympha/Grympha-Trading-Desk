@@ -177,6 +177,21 @@ class VersionSync(Base):
         sync_live_strategy_agents(self.eng, CFG)
         self.assertTrue(all(self.eng.agents[i].status == 'PAUSED' for i in old))
 
+    def test_a_new_pair_follows_its_other_agents(self):
+        from unittest import mock
+        set_meta(self.store, 'trade_controls', LIVE_TODAY)
+        cfg = dict(CFG, live_test_extra_symbols=['GBPAUD', 'EURNZD'])
+        with mock.patch('live_test.sync_live_strategy_agents', lambda *a: []):
+            ensure_default_agents(self.eng, cfg)                # the pairs' other agents only
+        for la in list(self.eng.agents.values()):
+            if la.base_symbol == 'GBPAUD':
+                self.eng.set_status(la.id, 'RUNNING')           # started; EURNZD's stay paused
+        sync_live_strategy_agents(self.eng, cfg)
+        status = lambda sym: {la.status for la in self.live() if la.base_symbol == sym}
+        self.assertEqual(status('GBPAUD'), {'RUNNING'})
+        self.assertEqual(status('EURNZD'), {'PAUSED'})
+        self.assertEqual(status('XAUUSD'), {'PAUSED'})          # existing behaviour unchanged
+
     def test_a_broken_settings_read_never_raises(self):
         class Broken:
             def connect(self):
