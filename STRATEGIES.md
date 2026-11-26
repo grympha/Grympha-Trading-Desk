@@ -57,7 +57,7 @@ executor (a guard test scans every `live_test*` source for forbidden order token
 fills BUY on Ask / SELL on Bid, exits on the opposite side, computes R from fill→initial-SL, flags
 stale-feed gaps as `DATA_GAP` (but a position held through the scheduled forex/metals pause — the
 daily rollover break 17:00–18:05 New York, ≈06:00 MYT, or the weekend — stays valid; a stop crossed
-when prices return fills at the reopening price, marked `gap_fill: MARKET_PAUSE`), tracks MFE/MAE, and supports **break-even / trailing / no-take-profit**
+when prices return fills at the reopening price, marked `gap_fill: MARKET_PAUSE`), tracks MFE/MAE, and supports **break-even / trailing / no-take-profit / partial close at a first target**
 exit management (optional per-agent). Agents: six **core** H1 agents + the **nine structure / ported
 agents** below (the AMD Power-of-Three agent registers three entry models — C1 / A1 / B1 — as
 separate agents). Skipped / NO_FILL / cancelled setups go to an exportable **Signal Log**; closed
@@ -75,6 +75,16 @@ all**. The tab auto-renders any registered agent, so all of them appear automati
 | 7 | **Momentum M5/M1** (`MOMENTUM_M5_M1`) | M1 (M5 bias) | XAUUSD | ported from the Momentum Desk — M5 EMA20/50 bias + M1 EMA20-pullback pending breakout; break-even + trailing, no TP, 15-min time stop |
 | 8 | **Advocate EMA Pullback** (`ADVOCATE_EMA_PULLBACK`) | M5 (M15 bias) | XAUUSD | ported from the XAU Advocate Desk — M15 EMA20/50 bias + M5 EMA20 pullback gated by a 3-objection debate (cost/extension/structure); trailing only, no TP |
 | 9 | **AMD Power of Three** (`AMD_PO3`, models C1/A1/B1) | M5 (H1 context) | XAUUSD | Market Cycle Guide model C1 — 06:00-06:55 UTC range, H1 pivot context frozen at 07:00, failed-breakout sweep → reclaim → origin confirm → retest; SL beyond the sweep extreme, TP inside the opposite boundary, ≥1.5 R:R, 10:00 UTC cutoff. A1 enters on the reclaim, B1 on the confirm (no retest) |
+| 10 | **BBMA live** (`LIVE_BBMA`, one agent per setup: CSA re-entry / Momentum re-entry / MHV reversal) | M5 (H1, M15) | BBMA pairs | the **live BBMA strategy**, simulated: calls `bbma_bot.assess` with the same frames and settings as the scanner (structural TP with runner); STOP entry at the trigger until expiry; TP = TP2; 50 % partial + break-even +50 pts at TP1; trail 1R from +1R |
+| 11 | **Confluence live** (`LIVE_CONFLUENCE`) | M15 (H1, H4) | Confluence pairs | the **live Five-factor Confluence strategy**, simulated: calls `confluence_strategy.evaluate`; score ≥ live minimum (4/5) enters at market once per M15 close; SL 1.5 ATR, TP = TP2 3.5 ATR; 50 % partial + break-even at TP1 (2 ATR); trail 1R from +1R |
+
+Agents 10–11 exist to judge each **live strategy × setup × pair** on R, without money, the shared
+position cap or skipped signals, before switching combinations off in **Pairs on / off** and
+**Strategy setups**. Their analysis settings are copied from `config.json` at registration (a
+config change registers new agents); management mirrors the dashboard settings of 2026-11-26.
+Not modelled: news blackouts, trade windows, the shared position cap and live polling delays.
+The live ORB (01:00–06:00 server range, `orb_strategy.py`) is a different strategy from agent 3
+and has no Live Test agent yet.
 
 All agents use closed candles for structure, a shared min-R:R gate (`RR_TOO_LOW`), per-symbol
 tick/point profiles and per agent × symbol × config state. One offline symbol never blocks the

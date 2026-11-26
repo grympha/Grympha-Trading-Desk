@@ -721,6 +721,7 @@ class Simulator:
     def _close(pos, now, exit_price, exit_spread, reason, quality):
         buy = pos['side'] == 'BUY'
         price_pnl = (exit_price - pos['entry_price']) if buy else (pos['entry_price'] - exit_price)
+        price_pnl = Simulator._blend(pos, price_pnl)
         pos.update(status='CLOSED', exit_time=now, exit_price=exit_price, exit_spread=exit_spread,
                    exit_reason=reason, duration_seconds=round(now - pos['entry_time']),
                    price_pnl=price_pnl, pnl_r=(price_pnl / pos['risk']) if pos['risk'] else None,
@@ -729,6 +730,18 @@ class Simulator:
         if pos['data_quality_status'] == VALID and quality != VALID:
             pos['data_quality_status'] = quality
         return pos
+
+    @staticmethod
+    def _blend(pos, remainder_pnl):
+        """Whole-position price P/L after an optional partial close (partial_fraction closed at
+        partial_exit_price, the rest at the current/exit price). R stays off the initial risk."""
+        f = pos.get('partial_fraction') if pos.get('partial_done') else None
+        if not f:
+            return remainder_pnl
+        part = pos['partial_exit_price'] - pos['entry_price']
+        if pos['side'] != 'BUY':
+            part = -part
+        return f * part + (1 - f) * remainder_pnl
 
     @classmethod
     def monitor(cls, pos, quote, now, max_gap):
@@ -755,6 +768,17 @@ class Simulator:
         if r is not None:                       # maximum favorable / adverse excursion, in R
             pos['mfe_r'] = round(max(pos.get('mfe_r', 0.0) or 0.0, r), 4)
             pos['mae_r'] = round(min(pos.get('mae_r', 0.0) or 0.0, r), 4)
+        # --- optional partial close at a first target (partial_price / partial_fraction), as the
+        # live executor does at TP1; be_on_partial then moves the stop to break-even. ---
+        pp = pos.get('partial_price')
+        if (pp is not None and not pos.get('partial_done')
+                and ((exit_basis >= pp) if buy else (exit_basis <= pp))):
+            pos.update(partial_done=True, partial_exit_price=exit_basis, partial_time=now)
+            if pos.get('be_on_partial') and r is not None:
+                pos['be_trigger_r'] = r
+        if pos.get('partial_done'):
+            pos['unrealized_pnl'] = cls._blend(pos, pnl)
+            pos['unrealized_r'] = (pos['unrealized_pnl'] / pos['risk']) if pos['risk'] else None
         sl = pos.get('stop', pos['initial_sl'])      # trailed/break-even stop if one has been set
         tp = pos['initial_tp']                        # None for agents that exit on stop/trail only
         sl_hit = (exit_basis <= sl) if buy else (exit_basis >= sl)
@@ -1210,6 +1234,18 @@ def build_agent(strategy_id, config):
             return AmdPowerOfThree(config)
         except Exception:
             return None
+    if strategy_id == 'LIVE_BBMA':
+        try:
+            from live_test_bbma import LiveBBMA
+            return LiveBBMA(config)
+        except Exception:
+            return None
+    if strategy_id == 'LIVE_CONFLUENCE':
+        try:
+            from live_test_confluence import LiveConfluence
+            return LiveConfluence(config)
+        except Exception:
+            return None
     return None
 
 
@@ -1281,3 +1317,17 @@ def ensure_default_agents(engine, cfg=None):
     for _m in amd_models:
         _reg(build_agent('AMD_PO3', {**{k: v for k, v in amd_cfg.items() if k != 'models'},
                                      'model': _m}), 'XAUUSD')
+    # The live-execution strategies, simulated: BBMA as one agent per setup and pair, and
+    # Five-factor Confluence as one agent per pair, on the pairs each strategy trades live.
+    # Analysis settings are copied from config.json, so they match what Live/DEMO execution uses.
+    try:
+        from live_test_bbma import LiveBBMA, SETUP_LABELS
+        from live_test_confluence import LiveConfluence
+    except Exception:
+        return
+    for base in live_test_symbols({'symbols': cfg.get('symbols') or []}) if cfg.get('symbols') else []:
+        for setup in SETUP_LABELS:
+            _reg(LiveBBMA.from_live_config(cfg, setup), base)
+    conf_symbols = (cfg.get('confluence') or {}).get('symbols') or cfg.get('symbols') or []
+    for base in live_test_symbols({'symbols': conf_symbols}) if conf_symbols else []:
+        _reg(LiveConfluence.from_live_config(cfg), base)

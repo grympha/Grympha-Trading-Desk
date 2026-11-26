@@ -100,7 +100,7 @@ class ReadOnlyGuard(unittest.TestCase):
         for name in ('live_test.py', 'market_data.py', 'live_test_h4_liq.py', 'live_test_crt.py',
                      'live_test_orb.py', 'live_test_h4_swing.py', 'live_test_ny_london.py',
                      'live_test_ifvg.py', 'live_test_momentum.py', 'live_test_advocate.py',
-                     'live_test_amd.py'):
+                     'live_test_amd.py', 'live_test_bbma.py', 'live_test_confluence.py'):
             code = self._code_only(name)
             for tok in self.FORBIDDEN:
                 self.assertNotIn(tok, code, f'{name} code must not reference {tok!r} (read-only Live Test)')
@@ -574,7 +574,8 @@ class CmsRegistration(unittest.TestCase):
                     if la.base_symbol == base and la.agent.strategy_id
                     not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG', 'CRT_H1_M5',
                             'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST',
-                            'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3')}
+                            'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3',
+                            'LIVE_BBMA', 'LIVE_CONFLUENCE')}
             self.assertEqual(len(core), 6)
             per_pair = {la.agent.strategy_id for la in eng.agents.values()
                         if la.base_symbol == base}
