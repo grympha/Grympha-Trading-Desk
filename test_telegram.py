@@ -45,6 +45,24 @@ class Config(unittest.TestCase):
         self.assertNotIn(TOKEN[12:], tg.mask(TOKEN))
 
 
+class NetworkErrors(unittest.TestCase):
+    TOKEN = '123456789:' + 'A' * 35
+
+    def fail_with(self, exc):
+        with patch('urllib.request.urlopen', side_effect=exc), self.assertRaises(RuntimeError) as e:
+            tg.send(self.TOKEN, '12345', 'hi')
+        self.assertNotIn(self.TOKEN, str(e.exception))
+        return str(e.exception)
+
+    def test_each_cause_is_named(self):
+        import ssl
+        self.assertIn('certificate', self.fail_with(urllib.error.URLError(ssl.SSLCertVerificationError('CERTIFICATE_VERIFY_FAILED'))))
+        self.assertIn('DNS', self.fail_with(urllib.error.URLError(OSError(11001, 'getaddrinfo failed'))))
+        self.assertIn('timed out', self.fail_with(urllib.error.URLError(TimeoutError('timed out'))))
+        self.assertIn('blocked', self.fail_with(urllib.error.URLError(ConnectionRefusedError(10061, 'refused'))))
+        self.assertIn('OSError', self.fail_with(OSError('odd')))
+
+
 def snap(orders=(), signals=(), meta=None):
     return {'meta': dict(meta or {}), 'demo_orders': [dict(o) for o in orders], 'signals': [dict(s) for s in signals]}
 

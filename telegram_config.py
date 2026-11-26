@@ -84,6 +84,22 @@ def write(enabled: bool, token: str, chat: str, path: Path = ENV_PATH) -> Path |
     return backup
 
 
+def reach_reason(exc: OSError) -> str:
+    """Plain cause of a network failure. Built from the error reason only, never the URL (it holds the token)."""
+    reason = getattr(exc, 'reason', exc)
+    text = str(reason).lower()
+    if 'certificate' in text or 'ssl' in text:
+        return ('secure connection refused (certificate check failed). Antivirus or a proxy may be inspecting '
+                'HTTPS; allow api.telegram.org or turn off HTTPS scanning for Python.')
+    if 'getaddrinfo' in text or 'name or service' in text or '11001' in text or '11004' in text:
+        return 'api.telegram.org could not be found (DNS). Check the internet connection or DNS settings.'
+    if 'timed out' in text or isinstance(reason, TimeoutError):
+        return 'no answer from api.telegram.org (timed out). A firewall may be blocking Python.'
+    if 'refused' in text or 'forcibly closed' in text or '10061' in text or '10054' in text:
+        return 'the connection was blocked. A firewall or antivirus may be blocking Python.'
+    return 'check the internet connection (' + type(reason).__name__ + ': ' + str(reason)[:80] + ')'
+
+
 def api(token: str, method: str, body: dict | None = None, timeout: float = 12) -> dict:
     data = json.dumps(body or {}).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/{method}', data, {'Content-Type': 'application/json'})
@@ -96,8 +112,8 @@ def api(token: str, method: str, body: dict | None = None, timeout: float = 12) 
         except Exception:
             desc = ''
         raise RuntimeError(f'Telegram refused the request ({exc.code}) {desc}'.strip()) from None
-    except OSError:
-        raise RuntimeError('Cannot reach Telegram; check the internet connection') from None
+    except OSError as exc:
+        raise RuntimeError('Cannot reach Telegram: ' + reach_reason(exc)) from None
     if not payload.get('ok'):
         raise RuntimeError('Telegram refused the request: ' + str(payload.get('description', '')))
     return payload.get('result', {})
