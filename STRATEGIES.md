@@ -153,6 +153,34 @@ grade A", off by default; only setups under 10 minutes old, never a backlog). Th
 the last day without alerting. Simulation only: it reads the Live Test tables, writes `signal_feed`
 (newest 5 000 rows) and never reaches orders or the executor (guard test). Re-run the Quant Agent
 (`--live`) after changing strategy settings — a new config is a new agent id with no backtest yet.
+With a Market Scout report available, a setup that opened while its spread was ≥ 2.5× the usual
+spread for that hour is flagged, and an A drops to B.
+
+## Market Scout — hourly market report (`market_scout.py`)
+
+While the bot runs, Market Scout sweeps every symbol visible in MT5's Market Watch plus the live and
+Live-Test-only pairs, five symbols per bot cycle (the sweep never delays the scanners), once an hour.
+Per symbol:
+
+- **Cost** — usual spread (median of the H1 bars' recorded spread) as a share of the H1 ATR, and the
+  live spread against the usual spread *for that hour of day* (MT5 bars record each bar's lowest
+  spread, so "unusually high" starts at 2.5×).
+- **Volatility** — mean of the last 5 daily ranges against the median of the 60 before:
+  QUIET < 0.7×, NORMAL, ACTIVE ≥ 1.4×, EXTREME ≥ 2×.
+- **Trend** — close / EMA20 / EMA50 alignment with a rising (falling) EMA50 on H1 and H4, plus the
+  efficiency ratio (H1 48 bars, H4 30 bars). RANGING below 0.10, STRONG when both timeframes agree
+  and efficiency ≥ 0.30.
+- **News** — high-impact events in the next 24 h for the symbol's currencies, from the bot's own MT5
+  calendar feed.
+
+Score 0–100 = 45 % cost + 35 % trend + 20 % volatility. Recommendations: news within 4 h for watched
+pairs, unusually wide spreads, expensive live pairs (spread ≥ 20 % of an hourly move), unusually
+active / quiet markets, strong trends, and candidates worth adding to Live Test (score ≥ 65 and
+spread ≤ 8 % of an hourly move). Dashboard → **Market Scout** tab (`/api/market-scout`); `python
+market_scout.py` runs one sweep now and prints it. Config (optional) `market_scout`: `enabled`,
+`interval_minutes` (60), `symbols_per_cycle` (5), `cycle_budget_seconds` (1.5), `news_hours` (24),
+`extra_symbols` ([]). Read-only: symbol list, symbol info, last tick and candles; hidden symbols are
+skipped, never added to Market Watch; no order API (guard test).
 
 ## Other project references
 

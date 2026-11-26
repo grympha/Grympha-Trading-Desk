@@ -24,6 +24,7 @@ import time
 
 from live_test import VALID, build_agent, myt_iso
 from quant_agent import load_results, summarise, verdict
+import market_scout
 
 SCHEMA = '''CREATE TABLE IF NOT EXISTS signal_feed(
  trade_id TEXT PRIMARY KEY, epoch REAL, agent_id TEXT, grade TEXT, payload TEXT);
@@ -48,6 +49,18 @@ def _record_text(name, s, verdict_text=None):
     if verdict_text and not verdict_text.startswith('TOO FEW'):
         out += f" ({verdict_text.split(' (')[0].lower()})"
     return out
+
+
+def market_context(scout_row, pos):
+    """What Market Scout knew about this market when the setup opened, or None without a sweep."""
+    if not scout_row:
+        return None
+    usual = market_scout.usual_spread(scout_row, pos['entry_time'])
+    spread = pos.get('entry_spread')
+    x = round(spread / usual, 2) if usual and spread else None
+    return dict(spread_x=x, wide_spread=bool(x and x >= market_scout.WIDE_SPREAD_X),
+                volatility=scout_row['volatility']['regime'], trend=scout_row['trend']['label'],
+                cost_pct=scout_row.get('cost_pct'), scout_epoch=scout_row.get('_epoch'))
 
 
 def grade(back, fwd):
@@ -119,6 +132,13 @@ class SignalAgent:
                 f"SELECT trade_id FROM signal_feed WHERE trade_id IN ({','.join('?' * len(entries))})",
                 list(entries)).fetchall()} if entries else set()
             backtests = load_results(self.store) if entries else {}
+            scout = {}
+            if entries:
+                try:
+                    rep = market_scout.load(self.store) or {}
+                    scout = {r['symbol']: dict(r, _epoch=rep.get('generated_epoch')) for r in rep.get('rows', [])}
+                except Exception:
+                    scout = {}
             new = []
             for p in sorted(entries.values(), key=lambda p: p['entry_time']):
                 if p['trade_id'] in known:
@@ -126,12 +146,17 @@ class SignalAgent:
                 aid = p['agent_id']
                 back, fwd = backtests.get(aid), self._forward(db, aid, p['entry_time'])
                 g, reason = grade(back, fwd)
+                market = market_context(scout.get(p.get('symbol')), p)
+                if market and market['wide_spread']:
+                    reason += f" · Spread at entry {market['spread_x']:.1f}× usual (Market Scout)"
+                    if g == 'A':
+                        g, reason = 'B', reason + ': downgraded from A'
                 feed = dict(trade_id=p['trade_id'], agent_id=aid, strategy_id=p.get('strategy_id'),
                             label=self._label(db, aid, p.get('strategy_id')), symbol=p.get('symbol'),
                             side=p.get('side'), timeframe=p.get('timeframe'), setup=p.get('setup'),
                             entry_time=p['entry_time'], entry_price=p.get('entry_price'),
                             initial_sl=p.get('initial_sl'), initial_tp=p.get('initial_tp'),
-                            grade=g, reason=reason,
+                            grade=g, reason=reason, market=market,
                             backtest=None if not back else {k: back.get(k) for k in
                                                             ('trades', 'avg_r', 'net_r', 'win_rate', 'verdict', 'start', 'end')},
                             forward={k: fwd.get(k) for k in ('trades', 'avg_r', 'net_r', 'win_rate')})

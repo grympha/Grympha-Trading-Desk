@@ -430,6 +430,13 @@ def _run(args):
                 signal_agent=SignalAgent(store,alert=signal_alert)  # grades Live Test setups · never trades
             except Exception as exc:
                 logging.warning('Signal Agent unavailable: %s', exc)
+        scout=None
+        if store and not args.once:
+            try:
+                from market_scout import MarketScout
+                scout=MarketScout(store,cfg,mt5)  # read-only market report, a few symbols per cycle · never trades
+            except Exception as exc:
+                logging.warning('Market Scout unavailable: %s', exc)
         while True:
             journal.refresh_sources(executor.news if executor else calendar)
             journal.submission_errors.clear()
@@ -494,6 +501,11 @@ def _run(args):
                 if signal_agent:
                     try:signal_agent.update()
                     except Exception as exc:logging.warning('Signal Agent cycle skipped: %s', exc)
+            if scout:
+                try:
+                    report=scout.step()
+                    if report:print(f"Market Scout: {len(report['rows'])} symbols · {len(report['recommendations'])} notes",flush=True)
+                except Exception as exc:logging.warning('Market Scout step skipped: %s', exc)
             journal.refresh()
             if notifier:
                 try:notifier.check()

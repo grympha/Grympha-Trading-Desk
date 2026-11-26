@@ -92,6 +92,23 @@ class Feed(unittest.TestCase):
         self.assertEqual(self.agent.update(now=NOW + 10), [])        # never twice
         self.assertEqual(len(self.alerts), 1)
 
+    def test_wide_spread_at_entry_downgrades_a_and_skips_the_alert(self):
+        import market_scout
+        qa.save_results(self.store, [dict(strategy_id='LIVE_CONFLUENCE', symbol='XAUUSD', config_id='abc123', setup='',
+                                          start=0, end=1, verdict='EDGE (keep testing live)',
+                                          stats=qa.summarise([dict(entry_time=i, pnl_r=r, data_quality_status=VALID)
+                                                              for i, r in enumerate([1, -0.5] * 20)]))])
+        market_scout.save(self.store, dict(generated_epoch=NOW - 600, rows=[dict(
+            symbol='XAUUSD', point=0.01, typical_spread_points=20, typical_spread_by_hour={},
+            volatility=dict(regime='ACTIVE'), trend=dict(label='MIXED'), cost_pct=0.01)]))
+        self.agent.update(now=NOW - 60)
+        self.open_position(self.pos('wide', NOW - 30, entry_spread=0.8))      # 4x the usual 0.20
+        [row] = self.agent.update(now=NOW)
+        self.assertEqual(row['grade'], 'B')
+        self.assertIn('downgraded from A', row['reason'])
+        self.assertEqual(row['market']['spread_x'], 4.0)
+        self.assertEqual(self.alerts, [])
+
     def test_grade_is_frozen_and_outcome_follows_the_trade(self):
         self.history([-1] * 25)                                        # a losing Live Test record
         self.open_position(self.pos('t1', NOW - 30))
