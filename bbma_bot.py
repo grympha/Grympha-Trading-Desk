@@ -462,6 +462,13 @@ def _run(args):
                             journal.health_event(f'{strategy} {stage}','UNAVAILABLE','Broker reconciliation failed')
             if live_engine:
                 try:
+                    if time.time()>=getattr(live_engine,'_next_settings_sync',0):
+                        # live-strategy agents follow the dashboard settings; a change starts a new agent version
+                        from live_test import sync_live_strategy_agents
+                        live_engine._next_settings_sync=time.time()+30
+                        changed=sync_live_strategy_agents(live_engine,cfg)
+                        if changed:
+                            print(f'Live Test: dashboard settings changed · {len(changed)} live-strategy agent versions registered/paused',flush=True)
                     from market_data import ReadOnlyMarketData
                     live_engine.run(ReadOnlyMarketData(mt5,cfg))  # SIMULATION ONLY · read-only feed, never the executor
                 except Exception as exc:

@@ -1323,24 +1323,67 @@ def ensure_default_agents(engine, cfg=None):
     for _m in amd_models:
         _reg(build_agent('AMD_PO3', {**{k: v for k, v in amd_cfg.items() if k != 'models'},
                                      'model': _m}), 'XAUUSD')
-    # The live-execution strategies, simulated: BBMA as one agent per setup and pair, and
-    # Five-factor Confluence as one agent per pair, on the pairs each strategy trades live.
-    # Analysis settings are copied from config.json, so they match what Live/DEMO execution uses.
-    try:
-        from live_test_bbma import LiveBBMA, SETUP_LABELS
-        from live_test_confluence import LiveConfluence
-    except Exception:
-        return
-    for base in live_test_symbols({'symbols': cfg.get('symbols') or []}) if cfg.get('symbols') else []:
+    # The live-execution strategies, simulated, on the current live dashboard settings.
+    sync_live_strategy_agents(engine, cfg)
+
+
+LIVE_STRATEGY_IDS = ('LIVE_BBMA', 'LIVE_CONFLUENCE', 'LIVE_ORB')
+
+
+def live_strategy_agents(cfg, store=None):
+    """[(agent, base_symbol)] for the live-execution strategies: BBMA as one agent per setup and pair,
+    Five-factor Confluence as one agent per pair (each on its own live pair list) and the live ORB on
+    XAUUSD. Analysis values come from config.json; management, the BBMA TP mode, the Confluence minimum
+    score and the ORB settings come from the live dashboard settings in `store` (when given)."""
+    from live_test_bbma import LiveBBMA, SETUP_LABELS, dashboard_settings
+    from live_test_confluence import LiveConfluence
+    from live_test_live_orb import LiveORB
+    cfg = cfg or {}
+    settings = dashboard_settings(store, cfg) if store is not None else None
+    out = []
+    for base in live_test_symbols({'symbols': cfg['symbols']}) if cfg.get('symbols') else []:
         for setup in SETUP_LABELS:
-            _reg(LiveBBMA.from_live_config(cfg, setup), base)
+            out.append((LiveBBMA.from_live_config(cfg, setup, settings), base))
     conf_symbols = (cfg.get('confluence') or {}).get('symbols') or cfg.get('symbols') or []
     for base in live_test_symbols({'symbols': conf_symbols}) if conf_symbols else []:
-        _reg(LiveConfluence.from_live_config(cfg), base)
-    # The live ORB (01:00-06:00 server range) — XAUUSD only, like orb_core v1.
-    try:
-        from live_test_live_orb import LiveORB
-    except Exception:
-        return
+        out.append((LiveConfluence.from_live_config(cfg, settings), base))
     if 'XAUUSD' in ((cfg.get('orb') or {}).get('symbols') or ['XAUUSD']):
-        _reg(LiveORB.from_live_config(cfg), 'XAUUSD')
+        out.append((LiveORB.from_live_config(cfg, settings), 'XAUUSD'))
+    return out
+
+
+def _live_slot(strategy_id, base, config):
+    """One slot per live strategy x pair x BBMA setup; settings versions of a slot replace each other."""
+    return strategy_id, base, config.get('setup', '')
+
+
+def sync_live_strategy_agents(engine, cfg):
+    """Keep the live-strategy agents on the CURRENT live dashboard settings.
+
+    Unchanged settings give the same configs and ids, so nothing happens. When a setting changes,
+    each affected slot gets a new agent version; it starts RUNNING if the version it replaces was
+    running, and the replaced version is paused with its trades kept (it shows how the old settings
+    did). Returns the ids that were registered or paused. Never raises: a failure here must not stop
+    the bot or the other agents."""
+    try:
+        engine._sync()                               # fresh Start/Pause states from the dashboard
+        wanted = {}
+        for agent, base in live_strategy_agents(cfg, engine.store):
+            wanted[f"{agent.strategy_id}|{base}|{agent.config_id}"] = (agent, base)
+    except Exception:
+        return []
+    current = [la for la in engine.agents.values() if la.agent.strategy_id in LIVE_STRATEGY_IDS]
+    changed = []
+    for aid, (agent, base) in wanted.items():
+        if aid in engine.agents:
+            continue
+        slot = _live_slot(agent.strategy_id, base, agent.config)
+        running = any(la.status == 'RUNNING' for la in current
+                      if _live_slot(la.agent.strategy_id, la.base_symbol, la.agent.config) == slot)
+        engine.register(agent, base, 'RUNNING' if running else 'PAUSED')
+        changed.append(aid)
+    for la in current:
+        if la.id not in wanted and la.status == 'RUNNING':
+            engine.set_status(la.id, 'PAUSED')       # superseded by the current-settings version
+            changed.append(la.id)
+    return changed

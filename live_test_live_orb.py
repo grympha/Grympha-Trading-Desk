@@ -27,7 +27,8 @@ LIVE_KEYS = ('range_start_hour', 'range_end_hour', 'trade_start_hour', 'trade_en
              'max_retest_penetration_fraction', 'max_bars_after_breakout', 'min_range_points',
              'max_range_points', 'max_spread_points', 'max_entry_drift_atr', 'max_signal_age_seconds',
              'max_tick_age_seconds')
-# Dashboard ORB settings (Settings -> Strategy setups -> ORB), values on 2026-11-26.
+# Dashboard ORB settings (Settings -> Strategy setups -> ORB). Defaults only: registration and
+# sync_live_strategy_agents apply the CURRENT dashboard values (live_test_bbma.dashboard_settings).
 DASHBOARD = dict(skip_weekdays=[2, 3], skip_months=[12], signals_per_day=1, sl_multiplier=0.9,
                  buy_sl_buffer_points=60, sell_sl_buffer_points=100, tp_mode='fixed', fixed_rr=2.0)
 # scan() statuses that the live runner would retry on its next 15 s poll within the signal window
@@ -51,11 +52,15 @@ class LiveORB:
         self.timeframe = self.config['entry_timeframe']
 
     @classmethod
-    def from_live_config(cls, cfg: dict) -> 'LiveORB':
+    def from_live_config(cls, cfg: dict, settings: dict | None = None) -> 'LiveORB':
+        """config.json values + (optionally) the live dashboard ORB settings and management."""
         orb = (cfg or {}).get('orb') or {}
         extra = {k: orb[k] for k in LIVE_KEYS if k in orb}
         offset = orb.get('session_utc_offset_hours')
         extra['session_utc_offset_hours'] = offset if offset is not None else (cfg or {}).get('bar_timestamp_offset_hours', 0)
+        s = settings or {}
+        extra.update(s.get('orb') or {})
+        extra.update(s.get('management') or {})
         return cls(extra)
 
     def label(self):

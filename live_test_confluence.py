@@ -44,11 +44,15 @@ class LiveConfluence:
         self.timeframe = self.config['entry_timeframe']
 
     @classmethod
-    def from_live_config(cls, cfg: dict) -> 'LiveConfluence':
+    def from_live_config(cls, cfg: dict, settings: dict | None = None) -> 'LiveConfluence':
+        """config.json values + (optionally) the live dashboard settings (minimum score, management)."""
         conf = (cfg or {}).get('confluence') or {}
         extra = {k: conf[k] for k in LIVE_KEYS if k in conf}
         if 'bar_grace_seconds' in (cfg or {}):
             extra['bar_grace_seconds'] = cfg['bar_grace_seconds']
+        s = settings or {}
+        extra.update(s.get('confluence') or {})
+        extra.update(s.get('management') or {})
         return cls(extra)
 
     def label(self):

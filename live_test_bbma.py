@@ -72,12 +72,51 @@ def iso_epoch(text):
 
 
 def management_extra(c, tp1, single_target):
-    """Live position management as Simulator fields (see trade_management.py)."""
-    extra = dict(trail_activation_r=c['trail_activation_r'], trail_distance_r=c['trail_distance_r'])
-    if not single_target and c['partial_fraction'] > 0:
-        extra.update(partial_price=tp1, partial_fraction=c['partial_fraction'],
-                     be_on_partial=True, be_offset_points=c['be_offset_points'])
+    """Live position management as Simulator fields (see trade_management.py). As live, the partial
+    close and the break-even move both trigger when TP1 is reached (never with a single structural
+    target); each can be off: partial_fraction 0, be_offset_points None, trail_activation_r None."""
+    extra = {}
+    if c.get('trail_activation_r') is not None and c.get('trail_distance_r') is not None:
+        extra.update(trail_activation_r=c['trail_activation_r'], trail_distance_r=c['trail_distance_r'])
+    fraction, be = c.get('partial_fraction') or 0, c.get('be_offset_points')
+    if not single_target and (fraction > 0 or be is not None):
+        extra.update(partial_price=tp1, partial_fraction=fraction)
+        if be is not None:
+            extra.update(be_on_partial=True, be_offset_points=be)
     return extra
+
+
+def _num(v):
+    v = float(v)
+    return int(v) if v.is_integer() else v
+
+
+def dashboard_settings(store, cfg) -> dict:
+    """The live dashboard settings the live-strategy agents mirror, read from the dashboard database:
+    trade management (Settings -> Trade management), the BBMA TP mode, the Confluence minimum score
+    and the ORB settings (Settings -> Strategy setups). Values are normalised so unchanged settings
+    always give the same agent config (and so the same agent id)."""
+    from structural_tp import mode
+    from strategy_settings import load
+    from trade_controls import controls
+    t = controls(store, cfg)
+    s = load(store, cfg)
+    tp_mode = mode(store)
+    management = dict(
+        partial_fraction=round(float(t['partial_percent']) / 100, 4) if t['partial_enabled'] else 0.0,
+        be_offset_points=_num(t['breakeven_offset_points']) if t['breakeven_enabled'] else None,
+        trail_activation_r=float(t['trailing_start_r']) if t['trailing_enabled'] else None,
+        trail_distance_r=float(t['trailing_distance_r']) if t['trailing_enabled'] else None)
+    orb = s['orb']
+    return dict(
+        management=management,
+        bbma=dict(tp_mode=tp_mode, structural_runner=bool(tp_mode == 'structural' and t['partial_enabled'])),
+        confluence=dict(min_score=int(s['confluence']['min_score'])),
+        orb=dict(skip_weekdays=list(orb['skip_weekdays']), skip_months=list(orb['skip_months']),
+                 signals_per_day=int(orb['signals_per_day']), sl_multiplier=float(orb['sl_multiplier']),
+                 buy_sl_buffer_points=int(orb['buy_sl_buffer_points']),
+                 sell_sl_buffer_points=int(orb['sell_sl_buffer_points']),
+                 tp_mode=orb['tp_mode'], fixed_rr=float(orb['fixed_rr'])))
 
 
 class LiveBBMA:
@@ -87,11 +126,12 @@ class LiveBBMA:
 
     DEFAULTS = dict(
         entry_timeframe='M5', setup='MOMENTUM_REENTRY',
-        # analysis (config.json values on 2026-11-26)
+        # analysis (defaults; registration copies the config.json values)
         min_bb_width_atr=2.0, signal_lookback=12, touch_tolerance_atr=0.1, mhv_lookback=30,
         confirmation_bars=4, buffer_points=2, buffer_atr=0.05, max_spread_atr=0.15,
         max_stop_atr=5.0, entry_expiry_minutes=10, bar_grace_seconds=120, history_bars=400,
-        # targets + management (dashboard settings on 2026-11-26)
+        # targets + management (defaults; registration and sync_live_strategy_agents apply the
+        # CURRENT live dashboard settings, see dashboard_settings)
         tp_mode='structural', structural_runner=True, max_spread_risk=0.25,
         partial_fraction=0.5, be_offset_points=50, trail_activation_r=1.0, trail_distance_r=1.0,
         max_gap_seconds=120, max_positions=1)
@@ -104,8 +144,11 @@ class LiveBBMA:
         self.timeframe = self.config['entry_timeframe']
 
     @classmethod
-    def from_live_config(cls, cfg: dict, setup: str) -> 'LiveBBMA':
-        return cls({**{k: cfg[k] for k in LIVE_KEYS if k in (cfg or {})}, 'setup': setup})
+    def from_live_config(cls, cfg: dict, setup: str, settings: dict | None = None) -> 'LiveBBMA':
+        """config.json analysis values + (optionally) the live dashboard settings."""
+        s = settings or {}
+        return cls({**{k: cfg[k] for k in LIVE_KEYS if k in (cfg or {})},
+                    **(s.get('bbma') or {}), **(s.get('management') or {}), 'setup': setup})
 
     def label(self):
         return f"BBMA live · {SETUP_LABELS[self.config['setup']]}"

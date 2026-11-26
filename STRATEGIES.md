@@ -81,8 +81,12 @@ all**. The tab auto-renders any registered agent, so all of them appear automati
 
 Agents 10–12 exist to judge each **live strategy × setup × pair** on R, without money, the shared
 position cap or skipped signals, before switching combinations off in **Pairs on / off** and
-**Strategy setups**. Their analysis settings are copied from `config.json` at registration (a
-config change registers new agents); management and the ORB dashboard settings mirror those of 2026-11-26.
+**Strategy setups**. Their analysis settings come from `config.json`; trade management (partial,
+break-even, trailing), the BBMA TP mode, the Confluence minimum score and the ORB settings follow the
+**live dashboard settings** (checked every 30 s). When one of those changes, each affected agent gets a
+**new version**: it takes over Running from the old version, and the old version is paused with its
+trades kept, so results under the old and new settings stay separate. A `config.json` change does the
+same at the next bot start.
 Not modelled: news blackouts, trade windows, the shared position cap and live polling delays.
 Agent 12 (live ORB, `orb_strategy.py`) and agent 3 (Gold ORB 09:30 New York) are different strategies.
 
