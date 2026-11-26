@@ -55,7 +55,9 @@ The **Live Test** tab forward-tests strategy agents on live MT5 data with a **re
 (`market_data.py`): every entry, SL, TP, exit and P/L is a **simulation** — no `order_send`, no
 executor (a guard test scans every `live_test*` source for forbidden order tokens). The simulator
 fills BUY on Ask / SELL on Bid, exits on the opposite side, computes R from fill→initial-SL, flags
-stale-feed gaps as `DATA_GAP`, tracks MFE/MAE, and supports **break-even / trailing / no-take-profit**
+stale-feed gaps as `DATA_GAP` (but a position held through the scheduled forex/metals pause — the
+daily rollover break 17:00–18:05 New York, ≈06:00 MYT, or the weekend — stays valid; a stop crossed
+when prices return fills at the reopening price, marked `gap_fill: MARKET_PAUSE`), tracks MFE/MAE, and supports **break-even / trailing / no-take-profit**
 exit management (optional per-agent). Agents: six **core** H1 agents + the **nine structure / ported
 agents** below (the AMD Power-of-Three agent registers three entry models — C1 / A1 / B1 — as
 separate agents). Skipped / NO_FILL / cancelled setups go to an exportable **Signal Log**; closed

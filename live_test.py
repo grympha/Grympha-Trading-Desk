@@ -20,6 +20,8 @@ try:
 except Exception:  # pragma: no cover
     ZoneInfo = None
 
+from market_hours import MarketClosed, unexplained_gap_seconds
+
 MYT = timezone(timedelta(hours=8))  # Malaysia time, no DST
 
 VALID = 'OK'
@@ -732,7 +734,13 @@ class Simulator:
     def monitor(cls, pos, quote, now, max_gap):
         """Advance one observed sample. Returns (pos, closed_bool)."""
         buy = pos['side'] == 'BUY'
-        gap = (now - pos.get('last_sample_epoch', now)) > max_gap
+        last = pos.get('last_sample_epoch', now)
+        gap = paused = False
+        if now - last > max_gap:
+            # The daily rollover break / weekend is a scheduled pause, not missing data:
+            # only the time the market was OPEN without a sample counts as a data gap.
+            gap = unexplained_gap_seconds(last, now, pos.get('symbol')) > max_gap
+            paused = not gap
         if gap and pos['data_quality_status'] == VALID:
             pos['data_quality_status'] = DATA_GAP
         exit_basis = quote.bid if buy else quote.ask
@@ -756,6 +764,10 @@ class Simulator:
             return cls._close(pos, now, sl, spread, 'AMBIGUOUS_SL_TP', UNCERTAIN), True
         if sl_hit:
             q = UNCERTAIN if gap else VALID
+            if paused:
+                # Price reopened beyond the stop: a real stop fills at the reopening price (slippage).
+                pos['gap_fill'] = 'MARKET_PAUSE'
+                return cls._close(pos, now, exit_basis, spread, 'SL', q), True
             return cls._close(pos, now, sl, spread, 'SL', q), True
         if tp_hit:
             q = UNCERTAIN if gap else VALID
@@ -972,6 +984,11 @@ class LiveTestEngine:
         except Exception as exc:
             la.feed_status = 'STALE_OR_CLOSED'
             la.state['_feed_note'] = str(exc)
+            if isinstance(exc, MarketClosed):
+                # Scheduled pause (daily rollover / weekend): no new entries, positions stay valid.
+                # When prices return, monitor() checks that the market was really closed meanwhile.
+                self._save_agent(la)
+                return
             # Feed down: no new entries. Flag open positions as having a data gap.
             for pos in la.open_positions:
                 if pos['data_quality_status'] == VALID:

@@ -56,6 +56,25 @@ def status(now: float | None = None) -> tuple[str, float | None]:
     return 'open', None
 
 
+def unexplained_gap_seconds(start: float, end: float, symbol: str | None = None, step: float = 60) -> float:
+    """Seconds between two price samples during which the market was OPEN.
+
+    A gap that falls inside the daily rollover break or the weekend is a scheduled pause, not
+    missing data. Crypto trades 24/7, so its whole gap counts. Gaps longer than 8 days are
+    returned whole (the bot was simply off)."""
+    if end <= start:
+        return 0.0
+    if trades_24_7(symbol) or end - start > 8 * 86400:
+        return float(end - start)
+    missing, t = 0.0, float(start)
+    while t < end:
+        seg = min(step, end - t)
+        if status(t + seg / 2)[0] == 'open':
+            missing += seg
+        t += seg
+    return missing
+
+
 def describe(now: float | None = None) -> str | None:
     """Human message for a closed market, with the reopening time in the PC's local time."""
     state, reopen = status(now)
