@@ -177,13 +177,19 @@ class LiveBBMA:
         pend = state.get('pending')
         if pend:
             log = dict(signal_id=pend['id'], symbol=symbol, side=pend['side'], epoch=now, setup=pend['setup'])
+            buy = pend['side'] == 'BUY'
+            crossed = (quote.ask >= pend['entry']) if buy else (quote.bid <= pend['entry'])
             if now >= pend['expires']:
                 self._emit(state, 'NO_FILL', reason='STOP_ORDER_EXPIRED', **log)
                 state['pending'] = None
-            elif (quote.ask >= pend['entry']) if pend['side'] == 'BUY' else (quote.bid <= pend['entry']):
+            elif crossed:
                 state['pending'] = None
-                return self._signal(pend, quote, now, state, log)
+                # A broker stop fills at its trigger when price trades through it. Only if price was
+                # already beyond the trigger at the previous look (a gap) does it fill at the quote.
+                gapped = not pend.get('seen_before_trigger')
+                return self._signal(pend, quote, now, state, log, at_trigger=not gapped)
             else:
+                pend['seen_before_trigger'] = True    # price observed on the waiting side
                 return None                       # stop order still waiting
         if not candles or market is None:
             return None
@@ -212,9 +218,9 @@ class LiveBBMA:
         state['pending'] = pend
         return None
 
-    def _signal(self, pend, quote, now, state, log):
+    def _signal(self, pend, quote, now, state, log, at_trigger=False):
         c, side = self.config, pend['side']
-        fill = quote.ask if side == 'BUY' else quote.bid
+        fill = pend['entry'] if at_trigger else (quote.ask if side == 'BUY' else quote.bid)
         sl, tp1, tp2 = pend['stop_loss'], pend['tp1'], pend['tp2']
         ordered = (sl < fill < tp2) if side == 'BUY' else (tp2 < fill < sl)
         if not ordered:
@@ -226,6 +232,6 @@ class LiveBBMA:
         extra.update(management_extra(c, tp1, pend['single_target']))
         day = datetime.fromtimestamp(now, MYT).strftime('%Y-%m-%d')
         return dict(side=side, signal_reason=f"BBMA {SETUP_LABELS[c['setup']]} {side} stop {pend['entry']}",
-                    signal_time=pend['created'], trigger_price=pend['entry'],
+                    signal_time=pend['created'], trigger_price=pend['entry'], entry_price=fill,
                     initial_sl=sl, initial_tp=tp2, session=f'{day}@bbma', timeframe=self.timeframe,
                     entry_candle_end=None, config_snapshot=dict(c), extra=extra)

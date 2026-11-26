@@ -106,6 +106,17 @@ class BBMAExecution(unittest.TestCase):
         self.assertEqual((ex['trail_activation_r'], ex['trail_distance_r']), (1.0, 1.0))
         self.assertIsNone(self.state['pending'])
 
+    def test_stop_fills_at_its_trigger_when_price_trades_through(self):
+        self.run_eval(q(1999.0, 1999.2), bbma_plan())
+        self.run_eval(q(1999.5, 1999.7, NOW + 30))                   # seen below the 2000.00 trigger
+        sig, _ = self.run_eval(q(2004.0, 2004.2, NOW + 60))          # next look is well past it
+        self.assertEqual(sig['entry_price'], 2000.0)                  # broker stop fills at the trigger
+
+    def test_a_gap_through_the_trigger_fills_at_the_quote(self):
+        self.run_eval(q(1999.0, 1999.2), bbma_plan())
+        sig, _ = self.run_eval(q(2004.0, 2004.2, NOW + 30))          # first look already beyond (gap)
+        self.assertEqual(sig['entry_price'], 2004.2)                  # BUY fills at the Ask
+
     def test_unfilled_stop_order_expires(self):
         self.run_eval(q(1999.0, 1999.2), bbma_plan(expires=NOW + 600))
         sig, _ = self.run_eval(q(1999.0, 1999.2, NOW + 601))

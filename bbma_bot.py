@@ -31,15 +31,23 @@ def indicators(raw):
     sd = d.close.rolling(20).std(ddof=0)
     d['upper'], d['lower'] = d.mid + 2 * sd, d.mid - 2 * sd
     for n in (5, 10):
-        weights = np.arange(1, n + 1)
+        # Linear-weighted MA (weights 1..n, newest heaviest): same values as
+        # rolling(n).apply(dot(x, 1..n) / sum), computed with one vectorised dot per window.
+        weights = np.arange(1, n + 1, dtype=float)
         for col in ('high', 'low'):
-            d[f'ma{n}_{col}'] = d[col].rolling(n).apply(
-                lambda x: np.dot(x, weights) / weights.sum(), raw=True)
-    # SMA-seeded EMA, rather than a first-close seed.
+            values = d[col].to_numpy(dtype=float)
+            out = np.full(len(values), np.nan)
+            if len(values) >= n:
+                windows = np.lib.stride_tricks.sliding_window_view(values, n)
+                out[n - 1:] = windows @ weights / weights.sum()
+            d[f'ma{n}_{col}'] = out
+    # SMA-seeded EMA, rather than a first-close seed (plain numpy loop; same recursion as before).
+    close = d.close.to_numpy(dtype=float)
     ema = np.full(len(d), np.nan)
-    ema[49] = d.close.iloc[:50].mean()
+    ema[49] = close[:50].mean()
+    alpha = 2 / 51
     for i in range(50, len(d)):
-        ema[i] = ema[i-1] + (2 / 51) * (d.close.iloc[i] - ema[i-1])
+        ema[i] = ema[i-1] + alpha * (close[i] - ema[i-1])
     d['ema50'] = ema
     tr = pd.concat([d.high-d.low, (d.high-d.close.shift()).abs(),
                     (d.low-d.close.shift()).abs()], axis=1).max(axis=1)

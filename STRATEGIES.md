@@ -104,6 +104,34 @@ tick/point profiles and per agent × symbol × config state. One offline symbol 
 others. See each `live_test_*.py` module and its `test_live_test_*.py` suite, plus
 [PROJECT_PROMPTS.md](PROJECT_PROMPTS.md).
 
+## Quant Agent — historical backtests (`quant_agent.py`)
+
+Runs any Live Test agent over MT5 history with the **same agent code and the same Live Test engine
+logic** (monitoring, freshness gate, position cap, simulator fills and exits), so its R results mean
+the same as Live Test's — in minutes instead of weeks. Read-only and simulated: it gets a replayed
+market that serves only candles already closed at the simulated moment (no lookahead); each M1
+candle becomes four quotes (open, the two extremes in their likely order, close). Nothing is written
+to the dashboard database and no order API exists in it (guard test).
+
+```
+python quant_agent.py --live --days 30                          # every live-strategy agent, all pairs
+python quant_agent.py --strategy LIVE_BBMA --setup CSA_REENTRY --symbol GBPAUD --days 60
+python quant_agent.py --all --days 14 --symbols XAUUSD,EURUSD   # every Live Test agent on two pairs
+python quant_agent.py --live --days 30 --extra-spread-points 20 # cost stress test
+```
+
+Reports go to `reports/quant_<time>.csv`, `.html` (summary per agent × pair: trades, win rate, net/avg R,
+profit factor, max drawdown, result **without the single best trade**, last-30 % out-of-sample R and a
+verdict) and `_trades.csv` (every simulated trade). Verdicts: `EDGE` needs ≥ 30 trades, avg > +0.05R,
+a positive result without the best trade AND a positive out-of-sample part; `LOSING` is avg < −0.15R.
+Live-strategy agents use the CURRENT dashboard settings for the whole period.
+
+Checked against live: on 18–25 Nov 2026 it found 10 of live BBMA's 13 XAUUSD setups with identical
+setup ids and entry prices (the rest were traded under the older 1R/2R target mode). Limits: fills
+from M1 candles, not ticks; the M1 spread is often the minute's minimum (use `--extra-spread-points`);
+news blackouts, trade windows and the shared position cap are not modelled. Treat results as
+optimistic and confirm in Live Test before switching anything on live.
+
 ## Other project references
 
 - **README.md** — install, run modes, decision sequence overview.

@@ -699,7 +699,9 @@ class Simulator:
     @staticmethod
     def open(agent, signal, quote, now):
         side = signal['side']
-        entry = quote.ask if side == 'BUY' else quote.bid
+        # A resting STOP order fills at its trigger when price trades through it; agents that model
+        # one pass `entry_price`. Everything else fills at the executable quote (BUY Ask / SELL Bid).
+        entry = signal.get('entry_price') or (quote.ask if side == 'BUY' else quote.bid)
         risk = abs(entry - signal['initial_sl'])
         tid = hashlib.sha1(f"{agent.id}:{signal['signal_time']}:{entry}".encode()).hexdigest()[:16]
         return dict(

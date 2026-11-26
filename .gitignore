@@ -50,3 +50,6 @@ venv/
 # OS
 Thumbs.db
 desktop.ini
+
+# Quant Agent backtest reports (local)
+reports/
