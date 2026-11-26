@@ -143,12 +143,37 @@ class SimulatorExitManagement(unittest.TestCase):
         # +1.5R: trailing tightens to price - 0.75R
         pos, closed = Simulator.monitor(pos, q(101.5, 101.5, BASE + 3), BASE + 3, 120)
         self.assertEqual(pos['stop'], 100.75)
-        # pull back through the trailed stop -> SL exit at 100.75, +0.75R (no TP ever hit)
+        # pull back through the trailed stop -> TRAIL_STOP exit at 100.75, +0.75R (no TP ever hit)
         pos, closed = Simulator.monitor(pos, q(100.70, 100.70, BASE + 4), BASE + 4, 120)
         self.assertTrue(closed)
-        self.assertEqual(pos['exit_reason'], 'SL')
+        self.assertEqual(pos['exit_reason'], 'TRAIL_STOP')
         self.assertEqual(pos['exit_price'], 100.75)
         self.assertAlmostEqual(pos['pnl_r'], 0.75, places=4)
+
+    def test_break_even_exit_is_labelled(self):
+        pos = self._pos(dict(be_trigger_r=1.0, be_offset_points=0.0,
+                             trail_activation_r=1.5, trail_distance_r=0.75))
+        pos, _ = Simulator.monitor(pos, q(101.2, 101.2, BASE + 1), BASE + 1, 120)    # +1.2R: stop to entry
+        pos, closed = Simulator.monitor(pos, q(99.9, 99.9, BASE + 2), BASE + 2, 120)
+        self.assertTrue(closed)
+        self.assertEqual((pos['exit_reason'], pos['exit_price'], pos['pnl_r']), ('BREAK_EVEN', 100.0, 0.0))
+
+    def test_original_stop_stays_sl(self):
+        pos = self._pos(dict(be_trigger_r=1.0, be_offset_points=0.0,
+                             trail_activation_r=1.5, trail_distance_r=0.75))
+        pos, _ = Simulator.monitor(pos, q(100.8, 100.8, BASE + 1), BASE + 1, 120)    # +0.8R: nothing moves
+        pos, closed = Simulator.monitor(pos, q(98.9, 98.9, BASE + 2), BASE + 2, 120)
+        self.assertTrue(closed)
+        self.assertEqual((pos['exit_reason'], pos['pnl_r']), ('SL', -1.0))
+
+    def test_label_is_inferred_for_positions_saved_before_labels(self):
+        from live_test import stop_exit_label
+        base = dict(initial_sl=99.0, trail_activation_r=1.5)
+        self.assertEqual(stop_exit_label(dict(base, stop=99.0, mfe_r=2.0)), 'SL')
+        self.assertEqual(stop_exit_label(dict(base, stop=100.0, mfe_r=1.2)), 'BREAK_EVEN')
+        self.assertEqual(stop_exit_label(dict(base, stop=100.75, mfe_r=1.6)), 'TRAIL_STOP')
+        self.assertEqual(stop_exit_label(dict(initial_sl=99.0, stop=100.0, mfe_r=3.0)), 'BREAK_EVEN')  # no trailing
+        self.assertEqual(stop_exit_label(dict(base, stop=100.0, mfe_r=3.0, stop_moved_by='BREAK_EVEN')), 'BREAK_EVEN')
 
     def test_no_tp_field_never_closes_on_tp(self):
         pos = self._pos(dict(trail_activation_r=2.0, trail_distance_r=1.0))

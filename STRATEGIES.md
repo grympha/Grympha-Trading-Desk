@@ -90,6 +90,12 @@ same at the next bot start.
 Not modelled: news blackouts, trade windows, the shared position cap and live polling delays.
 Agent 12 (live ORB, `orb_strategy.py`) and agent 3 (Gold ORB 09:30 New York) are different strategies.
 
+**Exit reasons.** `SL` = the original stop (−1R); `BREAK_EVEN` = a stop moved to entry (+offset);
+`TRAIL_STOP` = a trailed stop (usually a profit); `TP` = take-profit; `CANDLE_END` = the agent's time
+limit (e.g. Momentum's 15-minute max hold); `AMBIGUOUS_SL_TP` = both levels crossed within one sample.
+R is always measured from the original stop. Trades closed before 26 Nov 2026 were relabelled from
+`SL` by the same rule (`exit_reason_relabelled`).
+
 **Live-Test-only pairs.** `live_test_extra_symbols` in `config.json` adds pairs to every Live Test
 agent family (core, structure, BBMA live, Confluence live) **without** adding them to live trading —
 the live scanners and executor keep reading `symbols` / `confluence.symbols`. Takes effect at the next

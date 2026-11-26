@@ -693,6 +693,20 @@ class CmsSsr:
 
 
 # --------------------------------------------------------------------------- simulator
+def stop_exit_label(pos):
+    """Exit label when the stop is hit: SL = the original stop, BREAK_EVEN / TRAIL_STOP = a stop that
+    had been moved. Positions from before `stop_moved_by` existed are inferred: trailing only starts
+    once the trade has reached trail_activation_r."""
+    kind = pos.get('stop_moved_by')
+    if kind is None:
+        stop, initial = pos.get('stop'), pos.get('initial_sl')
+        if stop is None or initial is None or abs(stop - initial) < 1e-12:
+            return 'SL'
+        ta = pos.get('trail_activation_r')
+        kind = 'TRAIL' if ta is not None and (pos.get('mfe_r') or 0) >= ta else 'BREAK_EVEN'
+    return {'BREAK_EVEN': 'BREAK_EVEN', 'TRAIL': 'TRAIL_STOP'}.get(kind, 'SL')
+
+
 class Simulator:
     """Simulated fills and exits. BUY fills Ask / exits Bid; SELL fills Bid / exits Ask."""
 
@@ -792,11 +806,12 @@ class Simulator:
             return cls._close(pos, now, sl, spread, 'AMBIGUOUS_SL_TP', UNCERTAIN), True
         if sl_hit:
             q = UNCERTAIN if gap else VALID
+            reason = stop_exit_label(pos)
             if paused:
                 # Price reopened beyond the stop: a real stop fills at the reopening price (slippage).
                 pos['gap_fill'] = 'MARKET_PAUSE'
-                return cls._close(pos, now, exit_basis, spread, 'SL', q), True
-            return cls._close(pos, now, sl, spread, 'SL', q), True
+                return cls._close(pos, now, exit_basis, spread, reason, q), True
+            return cls._close(pos, now, sl, spread, reason, q), True
         if tp_hit:
             q = UNCERTAIN if gap else VALID
             return cls._close(pos, now, tp, spread, 'TP', q), True
@@ -808,19 +823,20 @@ class Simulator:
         # trail_activation_r / trail_distance_r); absent for agents that use a fixed SL.
         if r is not None and pos['risk']:
             d = 1 if buy else -1
-            cand = sl
+            cand, kind = sl, None
             be_r = pos.get('be_trigger_r')
             if be_r is not None and r >= be_r:
                 be = pos['entry_price'] + d * (pos.get('be_offset_points', 0.0) or 0.0) * quote.point
                 if d * (be - cand) > 0 and d * (exit_basis - be) > 0:
-                    cand = be
+                    cand, kind = be, 'BREAK_EVEN'
             ta, td = pos.get('trail_activation_r'), pos.get('trail_distance_r')
             if ta is not None and td is not None and r >= ta:
                 trail = exit_basis - d * td * pos['risk']
                 if d * (trail - cand) > 0:
-                    cand = trail
+                    cand, kind = trail, 'TRAIL'
             if d * (cand - sl) > 0:
                 pos['stop'] = round(cand, quote.digits)
+                pos['stop_moved_by'] = kind          # labels the exit if this stop is hit
         return pos, False
 
 
