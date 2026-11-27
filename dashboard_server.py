@@ -32,6 +32,10 @@ def light_snapshot(snap):
         from telegram_notify import status_view
         snap.setdefault('meta',{})['telegram']=status_view()  # on/off + configured only; never the token
     except Exception:pass
+    try:
+        from desk_identity import desk_name
+        snap.setdefault('meta',{})['desk_name']=desk_name(snap.get('meta'))  # which desk (several on one PC)
+    except Exception:pass
     return snap
 
 
@@ -87,7 +91,8 @@ def build_server(store, port=8765):
                     self.rfile.read(size)
                     creds=telegram_config.active()
                     if not creds:return self.send(b'Telegram is off or not set up. Use the launcher: Telegram alerts row.','text/plain',409)
-                    try:telegram_config.send(*creds,'\u2705 Grympha Trading Desk: test message from the dashboard. No trade was placed.')
+                    from desk_identity import tag_message
+                    try:telegram_config.send(*creds,tag_message('\u2705 Grympha Trading Desk: test message from the dashboard. No trade was placed.'))
                     except RuntimeError as exc:return self.send(str(exc).encode(),'text/plain',502)
                     return self.send(b'{"ok":true}','application/json')
                 if self.path=='/api/duplicate-ack':

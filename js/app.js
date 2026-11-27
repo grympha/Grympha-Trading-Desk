@@ -5,10 +5,12 @@
 async function refresh(){if(fetching||paused)return;fetching=true;try{
  const res=await fetch(demo?'demo.json':'api/status',{cache:'no-store'});if(!res.ok)throw Error(`HTTP ${res.status}`);
  const obj=await res.json();if(!Array.isArray(obj.symbols)||!Array.isArray(obj.signals))throw Error('Invalid response');
- $('build-version').textContent='UI v1.29 · Backend v'+(obj.version||'unknown');data=demo?rebaseDemo(obj):obj;serverDelta=data.server_epoch-Date.now()/1000;apiOnline=true;$('error-banner').classList.add('hidden');lastStatusFetch=Date.now();
+ $('build-version').textContent='UI v1.29 · Backend v'+(obj.version||'unknown');data=demo?rebaseDemo(obj):obj;serverDelta=data.server_epoch-Date.now()/1000;apiOnline=true;$('error-banner').classList.add('hidden');lastStatusFetch=Date.now();showDeskName(((data.meta||{}).desk_name)||'');
  if(document.hidden){checkAlerts();return;} // hidden tab: keep alerts, skip drawing (redrawn on return)
  render();chart();checkAlerts();refreshPageData(currentPage());
  }catch(err){apiOnline=false;$('error-banner').textContent='Dashboard connection lost. Displayed data may be old; entry ideas are withheld until updates resume.';$('error-banner').classList.remove('hidden');render();chart();checkAlerts();}finally{fetching=false;}}
+// Several desks on one PC: the desk name (launcher setting, else MT5 server · account type) in the header and tab title.
+function showDeskName(name){const el=$('desk-name');if(!el)return;el.textContent=name;el.hidden=!name;document.title=(name?name+' — ':'')+'Grympha Trading Desk';}
 for(const [id,strategy] of [['view-bbma','BBMA'],['view-confluence','CONFLUENCE'],['view-orb','ORB']])$(id).onclick=()=>{view=strategy;selected='';render();chart();};
 $('demo-banner').classList.toggle('hidden',!demo);
 $('zone').textContent=Intl.DateTimeFormat().resolvedOptions().timeZone||'Local time';

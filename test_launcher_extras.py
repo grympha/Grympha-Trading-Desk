@@ -34,13 +34,65 @@ class LauncherExtras(unittest.TestCase):
 
     def test_startup_entry_created_and_removed_in_given_folder(self):
         folder = self.dir / 'Startup'
-        self.assertFalse(lx.startup_enabled(folder))
-        path = lx.set_startup(True, folder, app_root=Path('D:/Grympha Trading Desk'))
-        self.assertTrue(lx.startup_enabled(folder))
+        app = Path('D:/Grympha Trading Desk')
+        self.assertFalse(lx.startup_enabled(folder, app_root=app))
+        path = lx.set_startup(True, folder, app_root=app)
+        self.assertTrue(lx.startup_enabled(folder, app_root=app))
         text = path.read_text()
         self.assertIn('START_APP.cmd" --startup', text); self.assertIn('/min', text)
-        lx.set_startup(False, folder)
-        self.assertFalse(lx.startup_enabled(folder))
+        lx.set_startup(False, folder, app_root=app)
+        self.assertFalse(lx.startup_enabled(folder, app_root=app))
+
+    def test_two_desks_each_start_with_windows(self):
+        folder = self.dir / 'Startup'
+        a, b = Path('D:/Grock AI Bot/Grympha Trading Desk'), Path('D:/Grock AI Bot/Grympha Desk Acct2')
+        pa = lx.set_startup(True, folder, app_root=a)
+        pb = lx.set_startup(True, folder, app_root=b)
+        self.assertEqual((pa.name, pb.name), ('Grympha Trading Desk (Grympha Trading Desk).cmd', 'Grympha Trading Desk (Grympha Desk Acct2).cmd'))
+        self.assertNotIn('timeout', pa.read_text())
+        self.assertIn('timeout /t 20 /nobreak', pb.read_text())               # the second desk waits
+        self.assertIn(str(b / 'START_APP.cmd'), pb.read_text())
+        lx.set_startup(False, folder, app_root=a)                              # only touches its own entry
+        self.assertFalse(lx.startup_enabled(folder, app_root=a))
+        self.assertTrue(lx.startup_enabled(folder, app_root=b))
+
+    def test_old_shared_entry_is_recognised_and_replaced(self):
+        folder = self.dir / 'Startup'; folder.mkdir()
+        a, b = Path('D:/Grock AI Bot/Grympha Trading Desk'), Path('D:/Grock AI Bot/Grympha Desk Acct2')
+        legacy = folder / lx.LEGACY_STARTUP_NAME
+        legacy.write_text(f'@echo off\r\nstart "Grympha Trading Desk" /min "{a / "START_APP.cmd"}" --startup\r\n')
+        self.assertTrue(lx.startup_enabled(folder, app_root=a))
+        self.assertFalse(lx.startup_enabled(folder, app_root=b))
+        lx.set_startup(True, folder, app_root=b)                               # another desk leaves it alone
+        self.assertTrue(legacy.exists())
+        lx.set_startup(True, folder, app_root=a)                               # its own desk renames it
+        self.assertFalse(legacy.exists())
+        self.assertTrue((folder / lx.startup_name(a)).exists())
+
+    def test_same_folder_name_elsewhere_gets_its_own_entry(self):
+        folder = self.dir / 'Startup'
+        a, b = Path('C:/Desks/Grympha Trading Desk'), Path('E:/Grympha Trading Desk')
+        pa, pb = lx.set_startup(True, folder, app_root=a), lx.set_startup(True, folder, app_root=b)
+        self.assertNotEqual(pa, pb)
+        self.assertTrue(lx.startup_enabled(folder, app_root=a) and lx.startup_enabled(folder, app_root=b))
+
+    def test_desk_name_is_cleaned(self):
+        p = self.dir / 's3.json'
+        self.assertEqual(lx.load_settings(p)['desk_name'], '')
+        lx.save_settings({'desk_name': '  Account 2\n·  Real\t' + 'x' * 60}, p)
+        self.assertEqual(lx.load_settings(p)['desk_name'], ('Account 2 · Real ' + 'x' * 60)[:40])
+        lx.save_settings({'desk_name': 42}, p)
+        self.assertEqual(lx.load_settings(p)['desk_name'], '')
+
+    def test_desk_identity_and_telegram_tag(self):
+        import desk_identity as di
+        p = self.dir / 's4.json'
+        meta = {'mt5_account': {'server': 'RoboForex-Pro', 'account_type': 'REAL'}}
+        self.assertEqual((di.desk_name(meta, p), di.desk_name(None, p), di.tag_message('🔔 New setup', p)),
+                         ('RoboForex-Pro · REAL', '', '🔔 New setup'))              # unnamed: alerts unchanged
+        lx.save_settings({'desk_name': 'Account 2 · Real'}, p)
+        self.assertEqual((di.desk_name(meta, p), di.tag_message('🔔 New setup', p)),
+                         ('Account 2 · Real', '[Account 2 · Real] 🔔 New setup'))
 
     def test_real_autostart_needs_saved_permission(self):
         p = self.dir / 's.json'

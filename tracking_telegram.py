@@ -46,7 +46,8 @@ class Board:
             if not t:continue
             if not token or not chat:
                 self.store.delivery(row['key'],'DISABLED');continue
-            key=row['key'];text=notification_text(row)
+            from desk_identity import tag_message
+            key=row['key'];text=tag_message(notification_text(row))
             digest=hashlib.sha256(text.encode()).hexdigest()
             event=json.dumps([row['lifecycle'],t.get('decision'),t.get('tp1_observed'),row.get('demo_execution',{}).get('status'),row.get('demo_execution',{}).get('decision')])
             # Store event signature alongside the text hash; critical state changes edit immediately.

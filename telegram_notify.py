@@ -13,6 +13,7 @@ import threading
 import time
 
 import telegram_config
+from desk_identity import tag_message
 
 PREFS_KEY, STATUS_KEY, SEEN_KEY = 'telegram_prefs', 'telegram_status', 'telegram_seen'
 EVENTS = {  # key: (label, default)
@@ -163,7 +164,7 @@ class Notifier:
             if not creds:
                 continue  # disabled or not set up in the launcher: drop quietly
             try:
-                self.send(*creds, text)
+                self.send(*creds, tag_message(text))       # "[desk name] …" when this desk has a name
                 self._status(last_sent_epoch=time.time(), last_error=None, sent=self._count('sent'))
             except Exception as exc:  # never log the token/URL
                 logging.warning('Telegram alert not sent: %s', str(exc)[:120])

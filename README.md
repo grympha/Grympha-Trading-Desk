@@ -139,3 +139,19 @@ Differences from the standalone package: the range is **01:00–06:00 server tim
 Every 24 hours (and shortly after the first start) the bot saves a verified copy of `dashboard.sqlite3` (trade ledger, history, reviews and dashboard settings) plus `config.json` and `launcher_settings.json` into `backups/<date_time>/`, keeping the newest 14. It uses SQLite's online backup, so the bot keeps running, and checks each copy before keeping it. `.env` (Telegram token) is not copied. Status and a **Back up now** button are on the dashboard's System Health page. Change the schedule in `config.json`: `"backup": {"enabled": true, "every_hours": 24, "keep": 14, "folder": "backups"}` (an absolute folder such as `C:/GrymphaBackups` is allowed, e.g. to keep copies on another drive).
 
 **Restore:** stop the bot, copy `backups/<date_time>/dashboard.sqlite3` over `dashboard.sqlite3`, delete `dashboard.sqlite3-wal` and `dashboard.sqlite3-shm` if present, then start the bot.
+
+## Two desks on one PC (two MT5 accounts)
+
+Each desk is its own project folder with its own MT5 installation, `config.json`, database and port:
+install MT5 a second time in another folder and log in to the second account there; copy the project
+folder and delete `dashboard.sqlite3` in the copy (the launcher rebuilds the copied `.venv` on
+Install/Repair); in the second launcher pick that MT5's `terminal64.exe` and port 8766. The launcher
+lock is per folder, so both run side by side.
+
+- **Desk name** (launcher, top row; saved in that folder's `launcher_settings.json`): shown in the
+  launcher title and tray tooltip, the dashboard header and browser tab, the home page header, and in
+  front of every Telegram alert as `[name]`. Without a name the dashboard and home page show the MT5
+  server and account type and Telegram alerts are unchanged (`desk_identity.py`).
+- **Start with Windows** writes one Startup entry per folder, `Grympha Trading Desk (<folder>).cmd`; an
+  older shared `Grympha Trading Desk.cmd` is renamed by the desk it starts. A desk switched on while
+  another already starts with Windows waits 20 s per other desk, so the two do not open MT5 together.

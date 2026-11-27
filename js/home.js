@@ -445,6 +445,9 @@ function applyData(){
   $('k-ag').textContent = T.running == null ? '—' : `${T.running}`;
   $('k-sg').textContent = T.signals_24h == null ? '—' : String(T.signals_24h);
   const lt = $('k-lt'); lt.textContent = T.net_r_30d == null ? '—' : signR(T.net_r_30d); lt.className = T.net_r_30d > 0 ? 'up' : T.net_r_30d < 0 ? 'down' : '';
+  const desk = (D.desk || '').toUpperCase();                     // several desks on one PC: which one this is
+  $('desk-line').textContent = desk ? `${desk} · COMMAND CENTER` : 'TRADING DESK · COMMAND CENTER';
+  document.title = (D.desk ? D.desk + ' — ' : '') + 'Grympha Command Center';
   const mode = offline ? 'OFFLINE' : (a.mode || 'ANALYSIS'), m = $('mode');
   m.textContent = D.bot_online === false && !offline ? mode + ' · BOT OFF' : mode; m.className = 'badge ' + ({ REAL: 'REAL', DEMO: '', ANALYSIS: 'ANALYSIS' }[mode] ?? 'OFF');
   pickTickers(); renderFeed(); renderTape();

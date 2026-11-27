@@ -77,9 +77,18 @@ class Alerts(unittest.TestCase):
         self.store = Store(Path(self.tmp.name) / 'd.sqlite3')
         self.sent = []
         self.patch = patch('telegram_config.active', return_value=('t', 'c')); self.patch.start()
+        self.desk_file = Path(self.tmp.name) / 'launcher_settings.json'     # never the real desk's name
+        self.desk = patch('desk_identity.SETTINGS_FILE', self.desk_file); self.desk.start()
 
     def tearDown(self):
-        self.patch.stop(); self.tmp.cleanup()
+        self.desk.stop(); self.patch.stop(); self.tmp.cleanup()
+
+    def test_alerts_carry_the_desk_name_when_one_is_set(self):
+        n = self.notifier([])
+        n.push('🔔 one'); self.drain(n)
+        self.desk_file.write_text(json.dumps({'desk_name': 'Account 2 · Real'}), encoding='utf-8')
+        n.push('🔔 two'); self.drain(n)
+        self.assertEqual(self.sent, ['🔔 one', '[Account 2 · Real] 🔔 two'])
 
     def notifier(self, frames):
         n = tn.Notifier(self.store, {}, mode='REAL', send=lambda t, c, text: self.sent.append(text))

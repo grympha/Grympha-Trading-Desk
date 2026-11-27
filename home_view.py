@@ -134,8 +134,13 @@ def build(store, now=None):
 
     sig = [dict(epoch=f.get('entry_time'), grade=f.get('grade'), strategy_id=f.get('strategy_id'),
                 symbol=f.get('symbol'), side=f.get('side')) for f in feed[:14]]
+    try:
+        from desk_identity import desk_name
+        desk = desk_name(meta)
+    except Exception:
+        desk = ''
     return dict(
-        status='OK', server_epoch=now, bot_online=bool(snap.get('bot_online')),
+        status='OK', server_epoch=now, bot_online=bool(snap.get('bot_online')), desk=desk,
         account=dict(mode=(acct.get('account_type') or 'ANALYSIS').upper() if acct.get('status') else 'ANALYSIS',
                      equity=acct.get('equity'), balance=acct.get('balance'), currency=acct.get('currency'),
                      floating=round(floating, 2), open_positions=len(positions)),

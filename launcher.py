@@ -5,7 +5,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,messagebox,filedialog
 from launcher_extras import (ICON_FILE,TrayIcon,load_settings,save_settings,read_real_account,save_real_account,
-                             validate_real_account,startup_enabled,set_startup,show_console,write_icon)
+                             validate_real_account,startup_enabled,set_startup,show_console,write_icon,clean_desk_name)
 import app_updater
 STARTED_BY_WINDOWS='--startup' in sys.argv
 ROOT=Path(__file__).resolve().parent
@@ -44,7 +44,7 @@ class App:
         self.settings=load_settings();self.tray=None;self.tray_hint_shown=False;self.auto_tries=0
         self.stop_requested=False;self.last_run=None;self.restart_times=[];self.restarting=False;self.restart_pending=False
         self.update_busy=False;self.update_info=None;self.update_restart_pending=False;self.update_gen=0;self.failed_target=None
-        root.title('Grympha Trading Desk · Automated Trading Agent · v1.11');root.geometry('1160x1010');root.minsize(900,760)
+        root.title(self.window_title());root.geometry('1160x1010');root.minsize(900,760)
         try:
             if not ICON_FILE.exists():write_icon(ICON_FILE)
             root.iconbitmap(default=str(ICON_FILE))
@@ -52,6 +52,7 @@ class App:
         style=ttk.Style();style.theme_use('clam')
         ttk.Label(root,text='Automated Trading Agent',font=('Segoe UI',19,'bold')).pack(anchor='w',padx=18,pady=(15,4))
         ttk.Label(root,text='Checks and setup first. Default start mode sends no orders. Keep MT5 logged in on this PC.').pack(anchor='w',padx=18)
+        self.build_desk_name(root)
         bar=ttk.Frame(root);bar.pack(fill='x',padx=15,pady=10)
         self.buttons=[]
         actions=[('Check requirements',self.check),('Setup / Install requirements',self.setup),('Choose MT5 terminal',self.choose_terminal),('Open MT5',self.open_terminal),('Install Calendar EA',self.install_ea),('Open app folder',lambda:os.startfile(ROOT))]
@@ -89,6 +90,32 @@ class App:
         if self.settings['autostart_bot']:root.after(20000 if STARTED_BY_WINDOWS else 3000,self.auto_start)
         if STARTED_BY_WINDOWS:root.after(1500,self.startup_notice)
         if self.settings['update_auto_check']:root.after(90000 if STARTED_BY_WINDOWS else 45000,self.update_tick)
+    # ---------------------------------------------------------------- desk name (several desks on one PC)
+    def desk_label(self):
+        """The chosen desk name; otherwise this folder's name when it is not the default one."""
+        name=self.settings.get('desk_name') or ''
+        return name or ('' if ROOT.name=='Grympha Trading Desk' else ROOT.name)
+    def window_title(self):
+        name=self.desk_label()
+        return (name+' — ' if name else '')+'Grympha Trading Desk · Automated Trading Agent · v1.11'
+    def tip(self,text):
+        name=self.desk_label()
+        return (name+' · ' if name else '')+'Grympha Trading Desk · '+text
+    def build_desk_name(self,root):
+        row=ttk.Frame(root);row.pack(fill='x',padx=18,pady=(6,0))
+        ttk.Label(row,text='Desk name').pack(side='left')
+        self.desk_var=tk.StringVar(value=self.settings.get('desk_name',''))
+        e=ttk.Entry(row,textvariable=self.desk_var,width=30);e.pack(side='left',padx=6);e.bind('<Return>',lambda _:self.save_desk_name())
+        ttk.Button(row,text='Save',command=self.save_desk_name).pack(side='left')
+        ttk.Label(row,text='e.g. "Main · Demo" or "Account 2 · Real". Shown in this window, the dashboard, the home page and Telegram alerts, so two desks on one PC are easy to tell apart.',foreground='#4a5d73').pack(side='left',padx=10)
+    def save_desk_name(self):
+        name=clean_desk_name(self.desk_var.get());self.desk_var.set(name)
+        self.settings['desk_name']=name
+        try:save_settings(self.settings)
+        except Exception as e:messagebox.showerror('Desk name','Not saved: '+str(e));return
+        self.root.title(self.window_title())
+        if self.tray:self.tray.set_tooltip(self.tip('bot running' if self.bot_running() else 'ready'))
+        self.write(('Desk name saved: '+name if name else 'Desk name cleared')+'. The dashboard, home page and Telegram alerts use it straight away; no restart needed.')
     # ---------------------------------------------------------------- REAL execution account
     def build_real_account(self,root):
         box=ttk.LabelFrame(root,text='REAL execution account (used only in REAL mode; must match the account logged into MT5)')
@@ -170,7 +197,7 @@ class App:
         try:tg.validate(token,chat)
         except ValueError as e:messagebox.showerror('Telegram',str(e));return
         if not (token and chat):messagebox.showinfo('Telegram','Enter the bot token and chat ID first.');return
-        self.tg_background('Sending test message…',lambda:dict(sent=tg.send(token,chat,'✅ Grympha Trading Desk: Telegram test message. Alerts will arrive here. No trade was placed.')))
+        self.tg_background('Sending test message…',lambda:dict(sent=tg.send(token,chat,(f'[{self.settings["desk_name"]}] ' if self.settings.get('desk_name') else '')+'✅ Grympha Trading Desk: Telegram test message. Alerts will arrive here. No trade was placed.')))
     def tg_save(self):
         import telegram_config as tg
         try:backup=tg.write(self.tg_enabled.get(),self.tg_token.get(),self.tg_chat.get())
@@ -366,7 +393,7 @@ class App:
                     '(you will be asked to confirm the REAL start unless REAL auto-start is allowed). Broker SL/TP stay at the broker meanwhile. Continue?',
                     icon='warning',default='no'):return
         self.update_busy=True;self.update_buttons(False);self.update_state.set('Installing update · testing it in a separate copy (about 2 minutes)…')
-        if self.tray:self.tray.set_tooltip('Grympha Trading Desk · installing update…')
+        if self.tray:self.tray.set_tooltip(self.tip('installing update…'))
         def work():
             try:res=app_updater.apply(ROOT,self.python(),self.settings['update_branch'],log=self.write)
             except Exception as exc:res=dict(ok=False,state=app_updater.ERROR,message='Update failed: '+str(exc)[:300],launcher_changed=False)
@@ -375,7 +402,7 @@ class App:
     def on_update_result(self,res):
         self.update_busy=False;self.update_info=None;self.update_buttons(True)
         self.version_text.set(self.version_label());self.update_state.set(res['message']);self.write(res['message'])
-        if self.tray:self.tray.set_tooltip('Grympha Trading Desk · '+('bot running' if self.bot_running() else 'ready'))
+        if self.tray:self.tray.set_tooltip(self.tip('bot running' if self.bot_running() else 'ready'))
         if not res['ok']:
             if res['state'] in (app_updater.TESTS_FAILED,app_updater.DEPS_FAILED):self.failed_target=res.get('to')
             if self.tray:self.tray.balloon('Update not installed',res['message'])
@@ -393,7 +420,7 @@ class App:
     def start_tray(self):
         try:
             if not ICON_FILE.exists():write_icon(ICON_FILE)
-            self.tray=TrayIcon('Grympha Trading Desk · ready',ICON_FILE,lambda name:self.events.put(('tray',name)))
+            self.tray=TrayIcon(self.tip('ready'),ICON_FILE,lambda name:self.events.put(('tray',name)))
             if not self.tray.start():self.tray=None
         except Exception:self.tray=None
     def on_unmap(self,event):
@@ -636,14 +663,14 @@ class App:
                         self.real_state.set(f'Read from MT5: {kind_txt} account · press Save REAL account to use it'+(' (warning: not a REAL account)' if kind_txt!='REAL' else ''))
                 elif kind=='started':
                     self.status.set('Running '+data[0]+' · dashboard port '+str(data[1]));self.stop_button.configure(state='normal');self.restart_button.configure(state='normal')
-                    if self.tray:self.tray.set_tooltip(f'Grympha Trading Desk · bot running ({data[0]}) · port {data[1]}')
+                    if self.tray:self.tray.set_tooltip(self.tip(f'bot running ({data[0]}) · port {data[1]}'))
                     if self.restarting:self.restarting=False;self.write('Auto-restart: bot is running again ('+data[0]+').')
                     elif not (STARTED_BY_WINDOWS and self.root.state()=='withdrawn'):webbrowser.open('http://127.0.0.1:'+str(data[1])+'/home')
                     elif self.tray:self.tray.balloon('Bot started',f'Running in {data[0]} mode. Dashboard: http://127.0.0.1:{data[1]}')
                 elif kind=='exited':
                     self.status.set('Bot stopped · exit '+str(data)+' · broker positions were not automatically closed');self.stop_button.configure(state='disabled');self.restart_button.configure(state='disabled')
                     if self.tray:
-                        self.tray.set_tooltip('Grympha Trading Desk · bot stopped')
+                        self.tray.set_tooltip(self.tip('bot stopped'))
                         if self.root.state()=='withdrawn' and not self.closing:self.tray.balloon('Bot stopped','The bot exited (code '+str(data)+'). Open the launcher for details.')
                     for b in self.buttons:b.configure(state='normal')
                     if self.closing:self.quit_app();return

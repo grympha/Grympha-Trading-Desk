@@ -15,13 +15,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SETTINGS_FILE = ROOT / 'launcher_settings.json'
 ICON_FILE = ROOT / 'launcher_icon.ico'
-STARTUP_NAME = 'Grympha Trading Desk.cmd'
+LEGACY_STARTUP_NAME = 'Grympha Trading Desk.cmd'     # before each folder had its own entry
+STARTUP_STAGGER_SECONDS = 20                         # a second desk starts this much later
+DESK_NAME_MAX = 40
 DEFAULT_SETTINGS = {'minimize_to_tray': True, 'start_in_tray': True, 'autostart_bot': False,
                     'autostart_mode': 'analysis', 'port': 8765, 'auto_restart': True,
                     'last_mode': 'analysis', 'allow_real_auto': False,
                     # self-update from GitHub (app_updater.py); never auto-installs while REAL is running
                     'update_auto_check': True, 'update_auto_install': True,
-                    'update_check_minutes': 30, 'update_branch': 'main'}
+                    'update_check_minutes': 30, 'update_branch': 'main',
+                    # shown in the launcher, dashboard, home page and Telegram alerts (several desks on one PC)
+                    'desk_name': ''}
 
 
 # ---------------------------------------------------------------- settings
@@ -47,7 +51,16 @@ def load_settings(path: Path = SETTINGS_FILE) -> dict:
     for key in ('update_auto_check', 'update_auto_install'):
         if not isinstance(out[key], bool):
             out[key] = DEFAULT_SETTINGS[key]
+    out['desk_name'] = clean_desk_name(out['desk_name'])
     return out
+
+
+def clean_desk_name(value) -> str:
+    """Printable, single line, at most DESK_NAME_MAX characters; anything else becomes ''."""
+    if not isinstance(value, str):
+        return ''
+    text = ' '.join(''.join(c if c.isprintable() else ' ' for c in value).split())
+    return text[:DESK_NAME_MAX]
 
 
 def save_settings(values: dict, path: Path = SETTINGS_FILE) -> None:
@@ -89,19 +102,53 @@ def startup_folder() -> Path:
     return Path(os.environ.get('APPDATA', str(Path.home() / 'AppData/Roaming'))) / 'Microsoft/Windows/Start Menu/Programs/Startup'
 
 
-def startup_enabled(folder: Path | None = None) -> bool:
-    return ((folder or startup_folder()) / STARTUP_NAME).is_file()
+def startup_name(app_root: Path = ROOT) -> str:
+    """One Startup entry per app folder, so two desks on one PC can both start with Windows."""
+    return f'Grympha Trading Desk ({app_root.name}).cmd'
+
+
+def _launches(path: Path, app_root: Path) -> bool:
+    try:
+        return str(app_root / 'START_APP.cmd').lower() in path.read_text(encoding='utf-8', errors='ignore').lower()
+    except OSError:
+        return False
+
+
+def _entry(folder: Path, app_root: Path) -> Path:
+    """This folder's Startup file; a desk in another folder with the same name gets a path hash."""
+    plain = folder / startup_name(app_root)
+    if plain.is_file() and not _launches(plain, app_root):
+        import hashlib
+        tag = hashlib.sha1(str(app_root).lower().encode()).hexdigest()[:6]
+        return folder / f'Grympha Trading Desk ({app_root.name} {tag}).cmd'
+    return plain
+
+
+def startup_enabled(folder: Path | None = None, app_root: Path = ROOT) -> bool:
+    folder = folder or startup_folder()
+    legacy = folder / LEGACY_STARTUP_NAME
+    return _entry(folder, app_root).is_file() or (legacy.is_file() and _launches(legacy, app_root))
 
 
 def set_startup(enabled: bool, folder: Path | None = None, app_root: Path = ROOT) -> Path:
-    """Add/remove a small .cmd in the user's Startup folder (visible in Task Manager > Startup apps)."""
-    target = (folder or startup_folder()) / STARTUP_NAME
+    """Add/remove this folder's .cmd in the user's Startup folder (visible in Task Manager > Startup
+    apps). The old shared entry is replaced when it starts this folder; another desk's entry is never
+    touched. When other desks already start with Windows, this one waits STARTUP_STAGGER_SECONDS per
+    desk so they do not connect to MT5 at the same moment."""
+    folder = folder or startup_folder()
+    target = _entry(folder, app_root)
+    legacy = folder / LEGACY_STARTUP_NAME
+    if legacy.is_file() and _launches(legacy, app_root):
+        legacy.unlink()
     if enabled:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
+        others = [x for x in folder.glob('Grympha Trading Desk*.cmd') if x.name != target.name]
+        wait = STARTUP_STAGGER_SECONDS * len(others)
         target.write_text('@echo off\r\n'
                           'rem Created by the Grympha Trading Desk launcher ("Start with Windows").\r\n'
                           'rem Untick the option in the launcher, or delete this file, to stop auto-start.\r\n'
-                          f'start "Grympha Trading Desk" /min "{app_root / "START_APP.cmd"}" --startup\r\n', encoding='utf-8')
+                          + (f'timeout /t {wait} /nobreak >nul\r\n' if wait else '')
+                          + f'start "Grympha Trading Desk" /min "{app_root / "START_APP.cmd"}" --startup\r\n', encoding='utf-8')
     elif target.exists():
         target.unlink()
     return target
