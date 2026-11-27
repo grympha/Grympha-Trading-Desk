@@ -443,7 +443,9 @@ def _run(args):
             disabled=disabled_pairs(store)
             from strategy_settings import load as load_strategy, bbma_overrides
             strategy_settings=load_strategy(store,cfg)
-            if confluence_runner:confluence_runner.c['min_score']=strategy_settings['confluence']['min_score']
+            if confluence_runner:
+                confluence_runner.c['min_score']=strategy_settings['confluence']['min_score']
+                confluence_runner.pair_scores=dict(strategy_settings['confluence'].get('pair_scores') or {})
             if orb_runner:orb_runner.apply(strategy_settings['orb'])
             def scan_bbma():
                 selected_tp_mode=tp_mode(store)

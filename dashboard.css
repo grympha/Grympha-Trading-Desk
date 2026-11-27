@@ -282,6 +282,12 @@ input[type=date]:focus,input:not([type]):focus,select:focus{outline:2px solid #3
 .score-pick label:has(input:checked),.opt:has(input:checked){border-color:#3d7e6f;background:#122a2a}
 .score-pick b{font-size:16px}
 .strategy-actions{grid-column:1/-1;display:flex;gap:14px;align-items:center}
+.pair-scores{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#0d2620}
+.pair-scores-head small{display:block;color:var(--muted);font-size:11px;margin:2px 0 8px}
+.pair-score-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 12px}
+.pair-score-grid label{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px}
+.pair-score-grid select{background:#0a1f1a;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit}
+.pair-score-grid label.own b{color:var(--gold,#ccae76)}
 @media(max-width:900px){.strategy-form{grid-template-columns:1fr}.score-pick{grid-template-columns:1fr}}
 /* v1.25 duplicate-bot banner */
 .dup-banner{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}.dup-banner b{display:block;font-size:13px;margin-bottom:2px}.dup-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.dup-banner .button{color:#ffd7dd;border-color:#7b3845;background:#41202a}

@@ -122,26 +122,41 @@ function strategySettings(s){
  const st=s?.meta?.strategy_settings;
  if(st)return {saved:true,...st,orb:{...ORB_DEFAULTS,...(st.orb||{})}};
  const score=Number((s?.symbols||[]).find(x=>x.min_score)?.min_score??4);
- return {saved:false,bbma:{csa_reentry:true,momentum_reentry:true,mhv:!!s?.meta?.mhv_enabled},confluence:{min_score:[3,4,5].includes(score)?score:4},orb:{...ORB_DEFAULTS}};
+ return {saved:false,bbma:{csa_reentry:true,momentum_reentry:true,mhv:!!s?.meta?.mhv_enabled},confluence:{min_score:[3,4,5].includes(score)?score:4,pair_scores:{}},orb:{...ORB_DEFAULTS}};
+}
+// Confluence score per pair: '' = follow the default score
+function renderPairScores(s,st){
+ const pairs=s?.meta?.strategies?.CONFLUENCE?.symbols||[],own=st.confluence.pair_scores||{};
+ $('st-pair-scores').innerHTML=pairs.length?pairs.map(p=>{const v=own[p]??'';return `<label class="${v?'own':''}"><b>${esc(p)}</b><select data-pair-score="${esc(p)}" aria-label="${esc(p)} Confluence minimum score" ${demo?'disabled':''}><option value="" ${v===''?'selected':''}>Default (${st.confluence.min_score}/5)</option>${[3,4,5].map(n=>`<option value="${n}" ${v===n?'selected':''}>${n}/5</option>`).join('')}</select></label>`;}).join(''):'<span class="small">Waiting for Confluence pairs.</span>';
+}
+function readPairScores(){
+ return Object.fromEntries([...document.querySelectorAll('[data-pair-score]')].filter(el=>el.value!=='').map(el=>[el.dataset.pairScore,Number(el.value)]));
 }
 function renderStrategySettings(s){
  if(strategyDirty)return;
  const st=strategySettings(s);
  $('st-csa').checked=st.bbma.csa_reentry;$('st-mom').checked=st.bbma.momentum_reentry;$('st-mhv').checked=st.bbma.mhv;
  for(const r of document.querySelectorAll('[name=st-score]'))r.checked=Number(r.value)===st.confluence.min_score;
+ renderPairScores(s,st);
  $('st-orb-trade').checked=!!st.orb.trade;renderOrbControls(st.orb);
  $('strategy-source').textContent=st.saved?'Saved in dashboard · applies from the bot\'s next check':'Using config.json defaults · not changed here yet';
 }
-$('strategy-form').oninput=()=>{strategyDirty=true;$('strategy-message').textContent='Unsaved changes';};
+$('strategy-form').oninput=e=>{
+ strategyDirty=true;$('strategy-message').textContent='Unsaved changes';
+ if(e.target.name==='st-score')for(const o of document.querySelectorAll('[data-pair-score] option[value=""]'))o.textContent=`Default (${e.target.value}/5)`;
+ if(e.target.dataset.pairScore)e.target.parentElement.classList.toggle('own',e.target.value!=='');
+};
 $('strategy-form').onsubmit=async e=>{
  e.preventDefault();
  if(demo){$('strategy-message').textContent='Sample view: settings are not sent or saved.';return;}
  const score=Number(document.querySelector('[name=st-score]:checked')?.value||4);
- const body={bbma:{csa_reentry:$('st-csa').checked,momentum_reentry:$('st-mom').checked,mhv:$('st-mhv').checked},confluence:{min_score:score},orb:readOrbControls()};
+ const body={bbma:{csa_reentry:$('st-csa').checked,momentum_reentry:$('st-mom').checked,mhv:$('st-mhv').checked},confluence:{min_score:score,pair_scores:Object.fromEntries(Object.entries(readPairScores()).filter(([,v])=>v!==score))},orb:readOrbControls()};
  if(!body.bbma.csa_reentry&&!body.bbma.momentum_reentry&&!body.bbma.mhv){$('strategy-message').textContent='Keep at least one BBMA setup on (or switch BBMA off per pair in Pairs on / off).';return;}
  const cur=strategySettings(data),names={csa_reentry:'CSA re-entry',momentum_reentry:'Momentum re-entry',mhv:'MHV reversal'},changes=[];
  for(const k of Object.keys(names))if(cur.bbma[k]!==body.bbma[k])changes.push(`• BBMA ${names[k]}: ${cur.bbma[k]?'ON':'OFF'} → ${body.bbma[k]?'ON':'OFF'}`);
  if(cur.confluence.min_score!==score)changes.push(`• Confluence minimum score: ${cur.confluence.min_score}/5 → ${score}/5`);
+ const was=cur.confluence.pair_scores||{},now_=body.confluence.pair_scores;
+ for(const p of [...new Set([...Object.keys(was),...Object.keys(now_)])].sort())if(was[p]!==now_[p])changes.push(`• Confluence ${p}: ${was[p]?was[p]+'/5':'default'} → ${now_[p]?now_[p]+'/5':'default ('+score+'/5)'}`);
  changes.push(...orbChanges(cur.orb,body.orb));
  if(!!cur.orb?.trade!==body.orb.trade)changes.push(`• ORB trading: ${cur.orb?.trade?'ON':'OFF (analysis only)'} → ${body.orb.trade?'ON — ORB may place orders':'OFF (analysis only)'}`);
  if(!changes.length){strategyDirty=false;$('strategy-message').textContent='No changes.';return;}

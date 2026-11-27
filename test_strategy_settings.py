@@ -14,7 +14,7 @@ from dashboard_server import build_server
 from dashboard_store import Store
 from test_bbma import CFG
 
-GOOD = {'bbma': {'csa_reentry': True, 'momentum_reentry': False, 'mhv': True}, 'confluence': {'min_score': 5}, 'orb': {'trade': False, 'skip_weekdays': [2, 3], 'skip_months': [12], 'signals_per_day': 1, 'sl_multiplier': 0.9, 'buy_sl_buffer_points': 60, 'sell_sl_buffer_points': 100, 'tp_mode': 'dynamic', 'fixed_rr': 2.0}}
+GOOD = {'bbma': {'csa_reentry': True, 'momentum_reentry': False, 'mhv': True}, 'confluence': {'min_score': 5, 'pair_scores': {'XAUUSD': 3}}, 'orb': {'trade': False, 'skip_weekdays': [2, 3], 'skip_months': [12], 'signals_per_day': 1, 'sl_multiplier': 0.9, 'buy_sl_buffer_points': 60, 'sell_sl_buffer_points': 100, 'tp_mode': 'dynamic', 'fixed_rr': 2.0}}
 
 
 class StrategySettings(unittest.TestCase):
@@ -27,9 +27,21 @@ class StrategySettings(unittest.TestCase):
 
     def test_defaults_follow_config_until_saved(self):
         cfg = {'enable_mhv': True, 'confluence': {'min_score': 3}}
-        self.assertEqual(ss.load(self.store, cfg), {'bbma': {'csa_reentry': True, 'momentum_reentry': True, 'mhv': True}, 'confluence': {'min_score': 3}, 'orb': {'trade': False, 'skip_weekdays': [2, 3], 'skip_months': [12], 'signals_per_day': 1, 'sl_multiplier': 0.9, 'buy_sl_buffer_points': 60, 'sell_sl_buffer_points': 100, 'tp_mode': 'dynamic', 'fixed_rr': 2.0}})
+        self.assertEqual(ss.load(self.store, cfg), {'bbma': {'csa_reentry': True, 'momentum_reentry': True, 'mhv': True}, 'confluence': {'min_score': 3, 'pair_scores': {}}, 'orb': {'trade': False, 'skip_weekdays': [2, 3], 'skip_months': [12], 'signals_per_day': 1, 'sl_multiplier': 0.9, 'buy_sl_buffer_points': 60, 'sell_sl_buffer_points': 100, 'tp_mode': 'dynamic', 'fixed_rr': 2.0}})
         ss.save(self.store, GOOD)
         self.assertEqual(ss.load(self.store, cfg), GOOD)
+
+    def test_pair_scores(self):
+        s = ss.validate({**GOOD, 'confluence': {'min_score': 4, 'pair_scores': {'XAUUSD': 3, 'XAGUSD': 5, 'EURUSD': 4}}})
+        self.assertEqual(s['confluence'], {'min_score': 4, 'pair_scores': {'XAGUSD': 5, 'XAUUSD': 3}})  # 4 = default, dropped
+        self.assertEqual([ss.confluence_score(s, p) for p in ('XAUUSD', 'XAGUSD', 'EURUSD')], [3, 5, 4])
+        old = ss.validate({**GOOD, 'confluence': {'min_score': 5}})     # saved before per-pair scores existed
+        self.assertEqual(old['confluence'], {'min_score': 5, 'pair_scores': {}})
+        for bad in ({'XAUUSD': 2}, {'XAUUSD': '3'}, {'XAU USD': 3}, {'': 3}, ['XAUUSD'], {'XAUUSD': True}):
+            with self.assertRaises(ValueError):
+                ss.validate({**GOOD, 'confluence': {'min_score': 4, 'pair_scores': bad}})
+        with self.assertRaises(ValueError):
+            ss.validate({**GOOD, 'confluence': {'min_score': 4, 'other': 1}})
 
     def test_validation(self):
         bad = [

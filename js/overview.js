@@ -40,7 +40,7 @@ function render(){
  const last=s.symbols.length?Math.max(...s.symbols.map(x=>x.updated_epoch)):0;
  $('last-check').textContent=last?date(last):'—';
  $('cadence').textContent=`Bot checks ${s.meta.poll_seconds||15}s · dashboard refreshes 5s`;
- {const st=strategySettings(s);$('mode').textContent=view==='ORB'?(st.orb?.trade?'ORB · TRADING ON':'ORB · ANALYSIS ONLY'):view==='CONFLUENCE'?`CONFLUENCE · MIN ${st.confluence.min_score}/5`:[st.bbma.csa_reentry&&'CSA',st.bbma.momentum_reentry&&'MOMENTUM',st.bbma.mhv&&'MHV'].filter(Boolean).join(' + ')||'NO SETUPS';}
+ {const st=strategySettings(s);$('mode').textContent=view==='ORB'?(st.orb?.trade?'ORB · TRADING ON':'ORB · ANALYSIS ONLY'):view==='CONFLUENCE'?`CONFLUENCE · MIN ${st.confluence.min_score}/5`+(Object.keys(st.confluence.pair_scores||{}).length?` · ${Object.keys(st.confluence.pair_scores).length} PAIR OVERRIDES`:''):[st.bbma.csa_reentry&&'CSA',st.bbma.momentum_reentry&&'MOMENTUM',st.bbma.mhv&&'MHV'].filter(Boolean).join(' + ')||'NO SETUPS';}
  setHTML('cards',ns.length?ns.map(sym=>{
  const x=s.symbols.find(x=>x.symbol===sym),p=latest(s,sym),st=stage(x,p),ok=x?.fresh&&x.health==='OK';
  const trend=ok?x.condition?.side:null,style=trend==='BUY'?'good':trend==='SELL'?'bad':'';

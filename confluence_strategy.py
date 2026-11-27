@@ -110,6 +110,10 @@ class Runner:
         signature=json.dumps(dict(c=self.c,bar_offset=cfg.get('bar_timestamp_offset_hours',0)),sort_keys=True)
         if self.cache.get('signature')!=signature:self.cache={'signature':signature,'symbols':{}}
         self.cache.setdefault('symbols',{})
+        self.pair_scores={}   # {symbol: 3|4|5} from Settings -> Strategy setups; others use c['min_score']
+
+    def score_for(self,symbol):
+        return int(self.pair_scores.get(symbol,self.c['min_score']))
 
     def check(self,mt5,symbol,now):
         if not mt5.terminal_info() or not mt5.terminal_info().connected:
@@ -142,15 +146,18 @@ class Runner:
                 raise ValueError(f'Confluence stale/unclosed {name} bars; age={bar_age:.0f}s')
             frames[name]=d
         key=int(frames['M15'].iloc[-1].time)
+        score=self.score_for(symbol)
         prior=self.cache['symbols'].get(symbol)
-        if prior and prior['candle']==key:
+        if prior and prior['candle']==key and prior['result'].get('min_score')==score:
             result=json.loads(json.dumps(prior['result']))
             result.update(checked_utc=stamp(now),new_analysis=False)
             result['quote']=dict(bid=float(tick.bid),ask=float(tick.ask),spread=float(tick.ask-tick.bid),spread_points=float(spread),digits=int(info.digits),age_seconds=float(age))
             result['reason']=f'No new closed M15 candle. Last analysis: {result["analysis_utc"]}. '+result['reason']
             return result
         f={k:indicators(v) for k,v in frames.items()}
-        result=evaluate(f['M15'],f['H1'],f['H4'],tick.bid,tick.ask,info.point,info.digits,self.cfg,now)
+        # the dashboard score (default or this pair's own) decides qualification, not config.json
+        cfg=dict(self.cfg,confluence=dict(self.cfg.get('confluence') or {},min_score=score))
+        result=evaluate(f['M15'],f['H1'],f['H4'],tick.bid,tick.ask,info.point,info.digits,cfg,now)
         result.update(symbol=symbol,new_analysis=True)
         try:
             from trade_review import market_snapshot

@@ -80,5 +80,15 @@ class Confluence(unittest.TestCase):
             self.assertEqual(a['entry_plan'],b['entry_plan'])
             # Cache survives restart without turning a historical quote into a new entry.
             self.assertFalse(Runner(cfg,Path(td)/'state.json').check(mt5,'XAUUSD',now+2)['new_analysis'])
+            # The dashboard score decides qualification: default, then this pair's own score.
+            self.assertEqual(a['min_score'],CFG['confluence']['min_score'])
+            runner.c['min_score']=4
+            c=runner.check(mt5,'XAUUSD',now+3)
+            self.assertTrue(c['new_analysis']);self.assertEqual(c['min_score'],4)   # changed score re-analyses
+            runner.pair_scores={'XAUUSD':5}
+            d=runner.check(mt5,'XAUUSD',now+4)
+            self.assertEqual(d['min_score'],5)
+            self.assertEqual(d['qualified'],d['score']>=5)
+            self.assertEqual(runner.score_for('EURUSD'),4)
 
 if __name__=='__main__':unittest.main()

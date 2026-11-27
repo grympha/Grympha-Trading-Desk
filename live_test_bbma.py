@@ -112,6 +112,7 @@ def dashboard_settings(store, cfg) -> dict:
         management=management,
         bbma=dict(tp_mode=tp_mode, structural_runner=bool(tp_mode == 'structural' and t['partial_enabled'])),
         confluence=dict(min_score=int(s['confluence']['min_score'])),
+        confluence_pairs=dict(s['confluence'].get('pair_scores') or {}),
         orb=dict(skip_weekdays=list(orb['skip_weekdays']), skip_months=list(orb['skip_months']),
                  signals_per_day=int(orb['signals_per_day']), sl_multiplier=float(orb['sl_multiplier']),
                  buy_sl_buffer_points=int(orb['buy_sl_buffer_points']),

@@ -44,8 +44,9 @@ class LiveConfluence:
         self.timeframe = self.config['entry_timeframe']
 
     @classmethod
-    def from_live_config(cls, cfg: dict, settings: dict | None = None) -> 'LiveConfluence':
-        """config.json values + (optionally) the live dashboard settings (minimum score, management)."""
+    def from_live_config(cls, cfg: dict, settings: dict | None = None, symbol: str | None = None) -> 'LiveConfluence':
+        """config.json values + (optionally) the live dashboard settings (minimum score, management).
+        With `symbol`, that pair's own minimum score (if set in the dashboard) replaces the default."""
         conf = (cfg or {}).get('confluence') or {}
         extra = {k: conf[k] for k in LIVE_KEYS if k in conf}
         if 'bar_grace_seconds' in (cfg or {}):
@@ -53,6 +54,9 @@ class LiveConfluence:
         s = settings or {}
         extra.update(s.get('confluence') or {})
         extra.update(s.get('management') or {})
+        own = (s.get('confluence_pairs') or {}).get(symbol)
+        if own is not None:
+            extra['min_score'] = int(own)
         return cls(extra)
 
     def label(self):

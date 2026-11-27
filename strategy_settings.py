@@ -3,22 +3,25 @@
 Stored in the dashboard database (meta key 'strategy_settings') and read by the bot every
 cycle, so changes apply without a restart. Defaults come from config.json until the first save.
 BBMA: CSA re-entry, Momentum re-entry, MHV reversal (experimental).
-Confluence: minimum five-factor score (H4 trend direction is always required).
+Confluence: minimum five-factor score (H4 trend direction is always required), with an
+optional score per pair (`pair_scores`) that overrides the default for that pair.
 ORB: trading on/off, trading days, skipped months, signals per day, stop-loss buffer/factor, take-profit mode.
 """
 from __future__ import annotations
 import json
+import re
 
 KEY = 'strategy_settings'
 BBMA_SETUPS = {'csa_reentry': 'CSA_REENTRY', 'momentum_reentry': 'MOMENTUM_REENTRY', 'mhv': 'MHV_REVERSAL'}
 SCORES = (3, 4, 5)
+PAIR = re.compile(r'[A-Za-z0-9._#+-]{1,32}')
 
 
 def defaults(cfg: dict | None = None) -> dict:
     cfg = cfg or {}
     score = int((cfg.get('confluence') or {}).get('min_score', 4))
     return {'bbma': {'csa_reentry': True, 'momentum_reentry': True, 'mhv': bool(cfg.get('enable_mhv', False))},
-            'confluence': {'min_score': score if score in SCORES else 4},
+            'confluence': {'min_score': score if score in SCORES else 4, 'pair_scores': {}},
             'orb': orb_defaults(cfg)}
 
 
@@ -78,9 +81,22 @@ def validate(values) -> dict:
         raise ValueError('BBMA setups must be true/false for: ' + ', '.join(BBMA_SETUPS))
     if not any(bbma.values()):
         raise ValueError('Keep at least one BBMA setup on (or turn BBMA off per pair in Pairs on / off)')
-    if not isinstance(conf, dict) or set(conf) != {'min_score'} or type(conf['min_score']) is not int or conf['min_score'] not in SCORES:
+    if not isinstance(conf, dict) or 'min_score' not in conf or not set(conf) <= {'min_score', 'pair_scores'} \
+            or type(conf['min_score']) is not int or conf['min_score'] not in SCORES:
         raise ValueError('Confluence minimum score must be 3, 4 or 5')
-    return {'bbma': dict(bbma), 'confluence': dict(conf), 'orb': dict(orb)}
+    pairs = conf.get('pair_scores') or {}
+    if not isinstance(pairs, dict) or not all(isinstance(k, str) and PAIR.fullmatch(k) and type(v) is int and v in SCORES
+                                              for k, v in pairs.items()):
+        raise ValueError('Confluence pair scores must be 3, 4 or 5 per pair')
+    # a pair set to the default score is the same as no override; keep only real overrides
+    pairs = {k: v for k, v in sorted(pairs.items()) if v != conf['min_score']}
+    return {'bbma': dict(bbma), 'confluence': {'min_score': conf['min_score'], 'pair_scores': pairs}, 'orb': dict(orb)}
+
+
+def confluence_score(settings: dict, symbol: str) -> int:
+    """The minimum Confluence score for one pair: its own score if set, else the default."""
+    conf = settings['confluence']
+    return int((conf.get('pair_scores') or {}).get(symbol, conf['min_score']))
 
 
 def load(store, cfg: dict | None = None) -> dict:

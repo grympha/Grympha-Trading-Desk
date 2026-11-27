@@ -83,6 +83,8 @@
       ]
     }
   },
+  "tick_timestamp_offset_hours": 2,
+  "bar_timestamp_offset_hours": 2,
   "history_timezone_offset_minutes": 480,
   "history_timestamp_offset_hours": 0,
   "real_execution": {

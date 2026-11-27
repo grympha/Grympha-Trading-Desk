@@ -1477,7 +1477,7 @@ def live_strategy_agents(cfg, store=None):
             out.append((LiveBBMA.from_live_config(cfg, setup, settings), base))
     conf_symbols = list((cfg.get('confluence') or {}).get('symbols') or cfg.get('symbols') or []) + extra
     for base in live_test_symbols({'symbols': conf_symbols}) if conf_symbols else []:
-        out.append((LiveConfluence.from_live_config(cfg, settings), base))
+        out.append((LiveConfluence.from_live_config(cfg, settings, base), base))
     if 'XAUUSD' in ((cfg.get('orb') or {}).get('symbols') or ['XAUUSD']):
         out.append((LiveORB.from_live_config(cfg, settings), 'XAUUSD'))
     return out

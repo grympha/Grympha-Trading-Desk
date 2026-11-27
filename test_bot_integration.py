@@ -36,7 +36,9 @@ class BotIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             cfg=json.loads((Path(__file__).parent/'config.example.json').read_text())
-            cfg['confluence']={'enabled':False};cfg['symbols']=['XAUUSD'];(root/'config.json').write_text(json.dumps(cfg))
+            cfg['confluence']={'enabled':False};cfg['symbols']=['XAUUSD']
+            cfg['tick_timestamp_offset_hours']=cfg['bar_timestamp_offset_hours']=0   # the fake MT5 clock is UTC
+            (root/'config.json').write_text(json.dumps(cfg))
             args=SimpleNamespace(config=str(root/'config.json'),once=True,test_telegram=False,
                                  diagnose_time=False,dashboard=False,dashboard_port=8765)
             with patch.object(bbma_bot,'ROOT',root),patch.object(bbma_bot,'assess',return_value=result),\

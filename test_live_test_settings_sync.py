@@ -71,6 +71,17 @@ class SettingsMapping(Base):
         # BBMA keeps testing all three setups even when one is switched off live
         self.assertIn(('LIVE_BBMA', 'XAUUSD', 'MHV_REVERSAL'), agents)
 
+    def test_a_pair_score_changes_only_that_pairs_agent(self):
+        base = lambda pairs: {'bbma': {'csa_reentry': True, 'momentum_reentry': True, 'mhv': False},
+                              'confluence': {'min_score': 4, 'pair_scores': pairs}, 'orb': {'trade': False}}
+        set_meta(self.store, 'strategy_settings', base({}))
+        before = {b: a.config_id for a, b in live_strategy_agents(CFG, self.store) if a.strategy_id == 'LIVE_CONFLUENCE'}
+        set_meta(self.store, 'strategy_settings', base({'XAUUSD': 3}))
+        after = {b: a for a, b in live_strategy_agents(CFG, self.store) if a.strategy_id == 'LIVE_CONFLUENCE'}
+        self.assertEqual((after['XAUUSD'].config['min_score'], after['EURUSD'].config['min_score']), (3, 4))
+        self.assertNotEqual(after['XAUUSD'].config_id, before['XAUUSD'])
+        self.assertEqual(after['EURUSD'].config_id, before['EURUSD'])     # untouched pair keeps its agent
+
 
 class ManagementFields(unittest.TestCase):
     BASE = dict(partial_fraction=0.5, be_offset_points=50, trail_activation_r=1.0, trail_distance_r=1.0)
