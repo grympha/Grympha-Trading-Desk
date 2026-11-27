@@ -35,6 +35,25 @@ def _r(x, n=2):
     return None if x is None else round(x, n)
 
 
+def _today_closed(db, tables):
+    """Today's closed P/L on the connected MT5 account: net of every BUY/SELL deal booked today
+    (profit + commission + swap + fee), as the bot's daily history reads it from MT5 every 30 s.
+    None when the bot has not loaded today yet (shown as a dash, never as 0). The account scope
+    is read here and never returned (the snapshot hides it too)."""
+    if 'daily_history' not in tables:
+        return None
+    meta = {r[0]: json.loads(r[1]) for r in db.execute(
+        "SELECT key, value FROM meta WHERE key IN ('daily_scope', 'daily_today')")}
+    scope, day = meta.get('daily_scope'), meta.get('daily_today')
+    if not scope or not day:
+        return None
+    row = db.execute('SELECT payload FROM daily_history WHERE account_scope=? AND day=?', (scope, day)).fetchone()
+    data = json.loads(row['payload']) if row and row['payload'] else None
+    if not data or data.get('status') != 'READY' or data.get('date') != day:
+        return None
+    return round(sum(float(d.get('net') or 0) for d in data.get('deals') or []), 2)
+
+
 def build(store, now=None):
     now = time.time() if now is None else now
     since = now - WINDOW_DAYS * DAY
@@ -53,6 +72,7 @@ def build(store, now=None):
             if 'live_test_trades' in tables else []
         feed = [json.loads(r['payload']) for r in db.execute(
             'SELECT payload FROM signal_feed ORDER BY epoch DESC LIMIT 400')] if 'signal_feed' in tables else []
+        today = _today_closed(db, tables)
     try:
         from market_scout import report_view
         scout_rows = report_view(store).get('rows') or []
@@ -143,7 +163,7 @@ def build(store, now=None):
         status='OK', server_epoch=now, bot_online=bool(snap.get('bot_online')), desk=desk,
         account=dict(mode=(acct.get('account_type') or 'ANALYSIS').upper() if acct.get('status') else 'ANALYSIS',
                      equity=acct.get('equity'), balance=acct.get('balance'), currency=acct.get('currency'),
-                     floating=round(floating, 2), open_positions=len(positions)),
+                     floating=round(floating, 2), open_positions=len(positions), today_closed=today),
         execution=(meta.get('demo_execution') or {}).get('status'),
         totals=dict(agents=len(live), running=sum(a['status'] == 'RUNNING' for a in live), pairs=len(pairs),
                     strategies=len(strategies), trades_30d=len(valid), net_r_30d=_r(sum(float(t['pnl_r']) for t in valid)),

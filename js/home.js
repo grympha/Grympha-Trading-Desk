@@ -34,7 +34,15 @@ async function fetchHome(){
 // ---------- stage fit (16:9 letterboxed) ----------
 const stage = $('stage');
 let scale = 1;
-function fit(){ scale = Math.min(innerWidth / W, innerHeight / H); stage.style.transform = `translate(${(innerWidth - W*scale)/2}px,${(innerHeight - H*scale)/2}px) scale(${scale})`; }
+// CSS zoom (not transform: scale) so the browser lays text and cards out at the real screen size and
+// draws them sharp; a scaled transform rasterises at 1920x1080 and then stretches, which looks soft.
+const ZOOM = CSS.supports('zoom', '2');
+function fit(){
+  scale = Math.min(innerWidth / W, innerHeight / H);
+  const x = Math.round((innerWidth - W * scale) / 2), y = Math.round((innerHeight - H * scale) / 2);
+  if (ZOOM) { stage.style.zoom = scale; stage.style.left = (x / scale) + 'px'; stage.style.top = (y / scale) + 'px'; stage.style.transform = ''; }
+  else stage.style.transform = `translate(${x}px,${y}px) scale(${scale})`;
+}
 addEventListener('resize', () => { fit(); if (window.__ready) { sizeGL(); sizeCanvases(); } }); fit();
 const HAS3D = !!(window.THREE && (() => { try { return !!document.createElement('canvas').getContext('webgl'); } catch (e) { return false; } })());
 if (!HAS3D) stage.insertAdjacentHTML('beforeend', '<div class="nogl">3D VIEW UNAVAILABLE<br>(this browser has WebGL turned off)</div>');
@@ -50,7 +58,7 @@ if (HAS3D) {
   if (THREE.EffectComposer && THREE.UnrealBloomPass) {
     composer = new THREE.EffectComposer(renderer);
     renderPass = new THREE.RenderPass(new THREE.Scene(), camera); composer.addPass(renderPass);
-    bloom = new THREE.UnrealBloomPass(new THREE.Vector2(W, H), .85, .55, .22); composer.addPass(bloom);
+    bloom = new THREE.UnrealBloomPass(new THREE.Vector2(W, H), .6, .35, .3); composer.addPass(bloom);   // glow without smearing
   }
   const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
   const gr = g.createRadialGradient(32,32,0,32,32,32); gr.addColorStop(0,'rgba(255,255,255,1)'); gr.addColorStop(.25,'rgba(255,255,255,.85)'); gr.addColorStop(1,'rgba(255,255,255,0)');
@@ -63,9 +71,10 @@ if (HAS3D) {
 }
 function sizeGL(){
   if (!HAS3D) return;
-  renderer.setPixelRatio(Math.min(2, devicePixelRatio * scale));
+  const pr = Math.min(3, Math.max(1, devicePixelRatio * scale));      // one 3D pixel per screen pixel
+  renderer.setPixelRatio(pr);
   renderer.setSize(W, H, false);
-  if (composer) { composer.setPixelRatio && composer.setPixelRatio(Math.min(2, devicePixelRatio * scale)); composer.setSize(W, H); }
+  if (composer) { composer.setPixelRatio && composer.setPixelRatio(pr); composer.setSize(W, H); }
 }
 sizeGL();
 const pointsMat = o => new THREE.PointsMaterial(Object.assign({ map: DOT, transparent: true, depthWrite: false, blending: ADD }, o));
@@ -122,7 +131,7 @@ function placeCards(){
     const d = camera.position.distanceTo(wp), [x, y, z] = project(wp);
     if (z > 1) { c.el.style.opacity = '0'; continue; }
     const sc = Math.max(.5, Math.min(1.15, V.cardScale / d));
-    const blur = Math.max(0, Math.abs(d - focus) * .75 - .7);
+    const blur = Math.min(1.2, Math.max(0, Math.abs(d - focus) * .45 - 1.2));   // light depth of field; nearby cards stay crisp
     const behind = occ && d > occ.d && Math.hypot(x - occ.x, y - occ.y) < occ.r * 1.05;
     c.el.style.transform = `translate(${(x - 98).toFixed(1)}px,${(y - 38).toFixed(1)}px) scale(${sc.toFixed(3)})`;
     c.el.style.filter = blur > .15 ? `blur(${blur.toFixed(2)}px)` : 'none';
@@ -333,7 +342,7 @@ addEventListener('keydown', e => { if (e.altKey || e.ctrlKey || e.metaKey) retur
 // ---------- 2D panels (real data) ----------
 const cv = {}; ['c-candle','c-tick','c-dist','c-heat','c-lead','rain'].forEach(id => cv[id] = $(id));
 function sizeCanvases(){
-  const pr = Math.min(2, devicePixelRatio * scale);
+  const pr = Math.min(3, Math.max(1, devicePixelRatio * scale));
   for (const id in cv) { const c = cv[id], w = id === 'rain' ? W : c.parentElement.clientWidth, h = id === 'rain' ? H : c.parentElement.clientHeight - 34;
     c.width = Math.round(w * pr); c.height = Math.round(h * pr); c._w = w; c._h = h; c.getContext('2d').setTransform(pr, 0, 0, pr, 0, 0); }
 }
@@ -443,8 +452,8 @@ function applyData(){
   $('k-eq').textContent = money(a.equity);
   const fl = $('k-fl'); fl.textContent = a.floating == null ? '—' : (a.floating >= 0 ? '+' : '') + money(a.floating); fl.className = a.floating > 0 ? 'up' : a.floating < 0 ? 'down' : '';
   $('k-ag').textContent = T.running == null ? '—' : `${T.running}`;
-  $('k-sg').textContent = T.signals_24h == null ? '—' : String(T.signals_24h);
-  const lt = $('k-lt'); lt.textContent = T.net_r_30d == null ? '—' : signR(T.net_r_30d); lt.className = T.net_r_30d > 0 ? 'up' : T.net_r_30d < 0 ? 'down' : '';
+  const td = $('k-td'), tv = a.today_closed;                    // today's closed P/L on the MT5 account
+  td.textContent = tv == null ? '—' : (tv >= 0 ? '+' : '') + money(tv); td.className = tv > 0 ? 'up' : tv < 0 ? 'down' : '';
   const desk = (D.desk || '').toUpperCase();                     // several desks on one PC: which one this is
   $('desk-line').textContent = desk ? `${desk} · COMMAND CENTER` : 'TRADING DESK · COMMAND CENTER';
   document.title = (D.desk ? D.desk + ' — ' : '') + 'Grympha Command Center';

@@ -56,6 +56,20 @@ class HomeView(unittest.TestCase):
         self.assertEqual((heat['BBMA LIVE'][-2], heat['CMS SSR'][-1]), (1.0, -1.0))
         self.assertNotIn('GONE', json.dumps(v['strategies']))
 
+    def test_today_pnl_is_todays_closed_deals_and_hides_the_account(self):
+        self.assertIsNone(home_view.build(self.store, now=NOW)['account']['today_closed'])   # bot not loaded yet: a dash, not 0
+        deals = [dict(net=12.5), dict(net=-3.25), dict(net=0.1)]
+        with self.store.connect() as db:
+            for k, v in (('daily_scope', 'secret-scope'), ('daily_today', '2026-11-27')):
+                db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (k, json.dumps(v)))
+            db.execute('INSERT INTO daily_history VALUES (?,?,?,?,?)', ('secret-scope', '2026-11-26', NOW, NOW,
+                       json.dumps(dict(status='READY', date='2026-11-26', deals=[dict(net=99.0)]))))     # yesterday: ignored
+            db.execute('INSERT INTO daily_history VALUES (?,?,?,?,?)', ('secret-scope', '2026-11-27', NOW, NOW,
+                       json.dumps(dict(status='READY', date='2026-11-27', deals=deals))))
+        v = home_view.build(self.store, now=NOW)
+        self.assertEqual(v['account']['today_closed'], 9.35)
+        self.assertNotIn('secret-scope', json.dumps(v))
+
     def test_unknown_strategy_gets_a_readable_name(self):
         self.assertEqual(home_view.short_name('NEW_THING_V2'), 'NEW THING V2')
 

@@ -38,8 +38,8 @@ html,body{margin:0;height:100%;background:#020806;overflow:hidden;color:var(--te
   radial-gradient(ellipse 60% 40% at 50% 100%,rgba(94,224,190,.10),transparent 70%),
   radial-gradient(ellipse 40% 30% at 50% 0%,rgba(204,174,118,.07),transparent 70%)}
 .vignette{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse 75% 70% at 50% 50%,transparent 55%,rgba(1,6,5,.78) 100%)}
-.scan{position:absolute;inset:0;pointer-events:none;opacity:.07;background:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px)}
-.grain{position:absolute;inset:-50%;pointer-events:none;opacity:.06;animation:grain 1.2s steps(6) infinite;
+.scan{position:absolute;inset:0;pointer-events:none;opacity:.03;background:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px)}
+.grain{position:absolute;inset:-50%;pointer-events:none;opacity:.035;animation:grain 1.2s steps(6) infinite;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
 .letterbox{position:absolute;left:0;right:0;height:0;background:#000;z-index:50;transition:height 2.4s cubic-bezier(.7,0,.2,1)}
 .letterbox.top{top:0}.letterbox.bot{bottom:0}
@@ -151,8 +151,7 @@ header{position:absolute;left:36px;right:36px;top:26px;height:64px;display:flex;
       <div class="kpi"><small>EQUITY</small><b class="gold" id="k-eq">—</b></div>
       <div class="kpi"><small>FLOATING</small><b id="k-fl">—</b></div>
       <div class="kpi"><small>AGENTS RUNNING</small><b id="k-ag">—</b></div>
-      <div class="kpi"><small>SIGNALS · 24H</small><b id="k-sg">—</b></div>
-      <div class="kpi"><small>LIVE TEST · 30D</small><b id="k-lt">—</b></div>
+      <div class="kpi" title="Closed trades booked today on the MT5 account (profit, commission, swap). Open trades are in FLOATING."><small>TODAY P/L</small><b id="k-td">—</b></div>
     </div>
     <div class="hdr-right"><span class="badge OFF" id="mode">—</span><div class="clock" id="clock">00:00:00<small>ASIA/KUALA_LUMPUR</small></div><a class="enter" href="/">ENTER DESK ›</a></div>
   </header>
@@ -186,6 +185,6 @@ header{position:absolute;left:36px;right:36px;top:26px;height:64px;display:flex;
 
 <script src="js/three-r128.js"></script>
 <script src="js/three-bloom.js"></script>
-<script src="js/home.js?v=1.36-desk-name"></script>
+<script src="js/home.js?v=1.39-today-pnl"></script>
 </body>
 </html>
