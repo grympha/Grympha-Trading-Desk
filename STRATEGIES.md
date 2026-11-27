@@ -190,6 +190,20 @@ market_scout.py` runs one sweep now and prints it. Config (optional) `market_sco
 `extra_symbols` ([]). Read-only: symbol list, symbol info, last tick and candles; hidden symbols are
 skipped, never added to Market Watch; no order API (guard test).
 
+## Command center — home page (`/home`, `home_view.py`, `js/home.js`)
+
+The launcher opens `http://127.0.0.1:<port>/home`; the dashboard logo also links there and **ENTER
+DESK** goes to the dashboard (`/`). A 3D centrepiece with a switch (buttons or keys 1/2/3; the choice is
+remembered per browser): **Globe** (one hub per traded pair, agents on orbit rings), **War Table**
+(towers at financial centres sized by agents per currency, one arc per pair) and **Galaxy** (one spiral
+arm per strategy, one star per agent). Arcs are teal / red / gold for a pair's 30-day Live Test net R
+up / down / no trades. Holographic cards = one per strategy (running/total agents, 30-day win rate and
+net R). Panels: XAUUSD M15 candles, quotes with 24 h change, Live Test R distribution (30 d,
+square-root bar height), strategy × day heatmap (14 d), agent leaderboard (30 d net R) and the Signal
+Agent feed. `/api/home` refreshes every 15 s; it only reads the database (clean `OK` trades only).
+three.js r128 is bundled (`js/three-r128.js`, `js/three-bloom.js`) because the page CSP allows
+same-origin scripts only. `?still` skips the intro; `?scene=table` opens a given scene.
+
 ## Other project references
 
 - **README.md** — install, run modes, decision sequence overview.

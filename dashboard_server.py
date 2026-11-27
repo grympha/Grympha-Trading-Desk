@@ -164,6 +164,9 @@ def build_server(store, port=8765):
             if path=='/api/quant-agent':
                 from quant_agent import report_view as quant_view
                 return self.send(json.dumps(quant_view(store),allow_nan=False).encode(),'application/json')
+            if path=='/api/home':
+                from home_view import build as home_build
+                return self.send(json.dumps(home_build(store),allow_nan=False).encode(),'application/json')
             if path=='/api/signal-agent':
                 from signal_agent import report as signal_report
                 return self.send(json.dumps(signal_report(store),allow_nan=False).encode(),'application/json')
@@ -235,7 +238,7 @@ def build_server(store, port=8765):
                     # Formula-neutralise textual CSV cells even if a custom symbol was supplied.
                     w.writerow({k:("'"+str(row.get(k,'')) if str(row.get(k,'')).startswith(('=','+','-','@')) else row.get(k,'')) for k in fields})
                 return self.send(buf.getvalue().encode('utf-8-sig'),'text/csv; charset=utf-8',attachment="bbma_signals.csv")
-            files={'/':'dashboard.html','/dashboard.css':'dashboard.css','/demo.json':'demo.json','/favicon.svg':'favicon.svg','/favicon.ico':'launcher_icon.ico'}
+            files={'/':'dashboard.html','/home':'home.html','/dashboard.css':'dashboard.css','/demo.json':'demo.json','/favicon.svg':'favicon.svg','/favicon.ico':'launcher_icon.ico'}
             # Dashboard scripts live in js/ (split by page area); only plain js/<name>.js files are served.
             if re.fullmatch(r'/js/[a-z][a-z0-9_-]*\.js',path):files[path]=path[1:]
             if path in files:

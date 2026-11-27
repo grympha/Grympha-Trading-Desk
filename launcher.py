@@ -581,7 +581,7 @@ class App:
         else:
             self.start()
     def open_dashboard(self):
-        try:webbrowser.open('http://127.0.0.1:'+str(self.running_port if self.bot and self.bot.poll() is None else self.port_number()))
+        try:webbrowser.open('http://127.0.0.1:'+str(self.running_port if self.bot and self.bot.poll() is None else self.port_number())+'/home')
         except Exception:messagebox.showerror('Port','Enter a valid dashboard port first.')
     def show_row(self,*_):
         selected=self.table.selection()
@@ -638,7 +638,7 @@ class App:
                     self.status.set('Running '+data[0]+' · dashboard port '+str(data[1]));self.stop_button.configure(state='normal');self.restart_button.configure(state='normal')
                     if self.tray:self.tray.set_tooltip(f'Grympha Trading Desk · bot running ({data[0]}) · port {data[1]}')
                     if self.restarting:self.restarting=False;self.write('Auto-restart: bot is running again ('+data[0]+').')
-                    elif not (STARTED_BY_WINDOWS and self.root.state()=='withdrawn'):webbrowser.open('http://127.0.0.1:'+str(data[1]))
+                    elif not (STARTED_BY_WINDOWS and self.root.state()=='withdrawn'):webbrowser.open('http://127.0.0.1:'+str(data[1])+'/home')
                     elif self.tray:self.tray.balloon('Bot started',f'Running in {data[0]} mode. Dashboard: http://127.0.0.1:{data[1]}')
                 elif kind=='exited':
                     self.status.set('Bot stopped · exit '+str(data)+' · broker positions were not automatically closed');self.stop_button.configure(state='disabled');self.restart_button.configure(state='disabled')
