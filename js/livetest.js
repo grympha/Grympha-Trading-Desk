@@ -44,6 +44,17 @@ function ltFillSelect(id, values) {
  el.value = [...el.options].some(o => o.value === keep) ? keep : 'ALL';
 }
 
+// Tick-mode agents (TrailFlip): what the stop-and-reverse is doing right now.
+const LT_TICK_MODE = { BUY: 'Long', SELL: 'Short', FLAT: 'Flat · entry stops armed', WARMING_UP: 'Warming up (first minute)',
+ DAILY_LIMIT: 'Stopped for today (daily loss limit)', FLIP_COOLDOWN: 'Exits only · too many flips (15 min)',
+ WIDE_SPREAD: 'Exits only · spread too wide', NO_TREND: 'Waiting for a trend or burst' };
+function ltTickLines(s) {
+ if (!s) return '';
+ const px = v => v == null ? '—' : Number(v).toFixed(2), level = s.level != null ? px(s.level) : (s.buy_stop != null ? `buy ${px(s.buy_stop)} · sell ${px(s.sell_stop)}` : '—');
+ return `<li class="step-label"><span>Now</span><b>${esc(LT_TICK_MODE[s.mode] || s.mode)}</b></li>`
+  + `<li class="step-label"><span>Trail D · level</span><b>${px(s.trail)} · ${level}</b></li>`
+  + `<li class="step-label"><span>Flips last hour · today</span><b>${s.flips_last_hour}/${s.max_flips ?? '—'} · ${s.today_r >= 0 ? '+' : ''}${s.today_r}R</b></li>`;
+}
 function renderLiveTest() {
  const r = liveTestData; if (!r) return;
  if ($('lt-note')) $('lt-note').textContent = r.error
@@ -76,7 +87,8 @@ function renderLiveTest() {
   return `<div class="pair-card"><div class="pair-top"><div class="pair-name">${esc(a.label || a.strategy_id)}<small>${esc(a.symbol)} · cfg ${esc(a.config_id)} · ${esc(a.strategy_version)}</small></div>${chip(running ? 'RUNNING' : 'PAUSED', running ? 'good' : 'warn')}</div>`
    + `<ul class="steps"><li class="step-label"><span>Feed</span><b>${esc(a.feed_status || '—')}</b></li>`
    + `<li class="step-label"><span>Last tick (MYT)</span><b>${esc(a.last_tick_myt || '—')}</b></li>`
-   + `<li class="step-label"><span>Last signal</span><b>${a.last_signal ? esc(a.last_signal.side + ' · ' + a.last_signal.reason) : '—'}</b></li></ul>`
+   + `<li class="step-label"><span>Last signal</span><b>${a.last_signal ? esc(a.last_signal.side + ' · ' + a.last_signal.reason) : '—'}</b></li>`
+   + ltTickLines(a.tick_state) + '</ul>'
    + `<div class="stats" style="margin-top:12px"><div><span class="stat-label">Valid trades</span><strong>${s.valid_trades ?? 0}</strong></div>`
    + `<div><span class="stat-label">Win rate</span><strong>${wr}</strong></div>`
    + `<div><span class="stat-label">Net R</span><strong>${s.net_r ?? 0}</strong></div>`

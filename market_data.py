@@ -123,6 +123,21 @@ class ReadOnlyMarketData:
         limit = self.cfg.get('max_tick_age_seconds', 60) if max_age is None else max_age
         return -5 <= q.age <= limit
 
+    # ---- ticks (read-only history, for tick-mode agents such as TrailFlip) ----
+    def ticks(self, symbol: str, start: float, end: float) -> list[tuple[float, float, float]]:
+        """Every bid/ask change in (start, end], as [(epoch, bid, ask)] in time order (UTC epochs,
+        same offset handling as quote())."""
+        off = self._tick_off()
+        rows = self._mt5.copy_ticks_range(symbol, int(start + off), int(end + off) + 1, self._mt5.COPY_TICKS_INFO)
+        if rows is None:
+            raise ValueError(f'No ticks for {symbol}')
+        out = []
+        for r in rows:
+            t, bid, ask = float(r['time_msc']) / 1000 - off, float(r['bid']), float(r['ask'])
+            if start < t <= end + 1 and bid > 0 and ask >= bid:
+                out.append((t, bid, ask))
+        return out
+
     # ---- candles (read-only, closed bars only) -----------------------------
     def candles(self, symbol: str, timeframe: str, count: int, now: float | None = None) -> list[Bar]:
         return self._remember(('candles', symbol, timeframe, count, now),

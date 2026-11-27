@@ -1035,7 +1035,50 @@ class LiveTestEngine:
                 self._batch = None
         return touched
 
+    def _run_tick_agent(self, la, market, now):
+        """Tick-mode agents (TrailFlip): replay every MT5 tick since the agent's previous cycle, so a
+        15 s cycle does not hide what happened in between. Same read-only adapter, same trade records."""
+        cfg = la.agent.config
+        symbol = market.resolve_symbol(la.base_symbol) if hasattr(market, 'resolve_symbol') else la.base_symbol
+        if not symbol:
+            la.feed_status = 'SYMBOL_UNAVAILABLE'
+            self._save_agent(la)
+            return
+        la.symbol = symbol
+        try:
+            q = market.quote(symbol, now=now)
+        except Exception as exc:          # closed or stale: nothing is lost, the next cycle catches up
+            la.feed_status = 'STALE_OR_CLOSED'
+            la.state['_feed_note'] = str(exc)
+            self._save_agent(la)
+            return
+        la.last_tick_epoch = q.time
+        la.feed_status = 'LIVE' if (market.is_fresh(q) if hasattr(market, 'is_fresh') else True) else 'STALE'
+        st, pos = la.state, (la.open_positions[0] if la.open_positions else None)
+        last = st.get('tick_t')
+        if not last or now - last > cfg.get('max_catchup_seconds', 86400):
+            gone = la.agent.abandon(st, pos, max(q.time, now - 60), q.bid, q.ask, q.digits)
+            if gone is not None:
+                self._save_position(gone)
+            pos, la.open_positions = None, []
+        start = st['tick_t']
+        ticks = market.ticks(symbol, start, now)
+        minutes = int((now - start) // 60) + 2
+        m1 = market.candles(symbol, 'M1', min(2000, minutes + 60), now=now)
+        closed, pos = la.agent.run_ticks(st, pos, ticks, m1, q.point, q.digits, symbol, la.id)
+        for t in closed:
+            self._save_position(t)
+        if pos is not None:
+            self._save_position(pos)
+        la.open_positions = [pos] if pos is not None else []
+        if closed or pos is not None:
+            last_pos = pos or closed[-1]
+            la.last_signal = dict(side=last_pos['side'], reason=last_pos['signal_reason'], epoch=last_pos['entry_time'])
+        self._save_agent(la)
+
     def _run_agent(self, la, market, now):
+        if getattr(la.agent, 'tick_mode', False):
+            return self._run_tick_agent(la, market, now)
         cfg = la.agent.config
         max_gap = cfg.get('max_gap_seconds', self.max_gap_default)
         symbol = market.resolve_symbol(la.base_symbol) if hasattr(market, 'resolve_symbol') else la.base_symbol
@@ -1124,7 +1167,9 @@ class LiveTestEngine:
                 last_tick_epoch=la.last_tick_epoch, last_tick_myt=myt_iso(la.last_tick_epoch),
                 last_signal=la.last_signal, config=la.agent.config,
                 open_positions=[self._public_pos(p, now) for p in la.open_positions],
-                stats=stats[la.id]))
+                stats=stats[la.id],
+                tick_state=la.agent.status_view(la.state, la.open_positions[0] if la.open_positions else None)
+                if getattr(la.agent, 'tick_mode', False) else None))
         recent = []
         for t in everything[:1000]:
             recent.append(dict(t, closed_myt=myt_iso(t.get('exit_time')), entry_myt=myt_iso(t.get('entry_time'))))
@@ -1285,6 +1330,12 @@ def build_agent(strategy_id, config):
             return AmdPowerOfThree(config)
         except Exception:
             return None
+    if strategy_id == 'TRAILFLIP':
+        try:
+            from live_test_trailflip import TrailFlip
+            return TrailFlip(config)
+        except Exception:
+            return None
     if strategy_id == 'LIVE_BBMA':
         try:
             from live_test_bbma import LiveBBMA
@@ -1382,6 +1433,14 @@ def ensure_default_agents(engine, cfg=None):
     for _m in amd_models:
         _reg(build_agent('AMD_PO3', {**{k: v for k, v in amd_cfg.items() if k != 'models'},
                                      'model': _m}), 'XAUUSD')
+    # TrailFlip (tick-by-tick stop-and-reverse), XAUUSD: video style and the trend-filter variant.
+    # A new TrailFlip agent starts RUNNING when the pair's other agents are running.
+    tf_cfg = cfg.get('trailflip') or {}
+    gold_running = any(la.status == 'RUNNING' for la in engine.agents.values() if la.base_symbol == 'XAUUSD')
+    for video in (True, False):
+        agent = build_agent('TRAILFLIP', {**tf_cfg, 'video_style': video})
+        if agent is not None and f"{agent.strategy_id}|XAUUSD|{agent.config_id}" not in engine.agents:
+            engine.register(agent, 'XAUUSD', 'RUNNING' if gold_running else 'PAUSED')
     # The live-execution strategies, simulated, on the current live dashboard settings.
     sync_live_strategy_agents(engine, cfg)
 

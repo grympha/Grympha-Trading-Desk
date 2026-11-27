@@ -30,6 +30,9 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS signal_feed(
  trade_id TEXT PRIMARY KEY, epoch REAL, agent_id TEXT, grade TEXT, payload TEXT);
 CREATE INDEX IF NOT EXISTS signal_feed_epoch ON signal_feed(epoch DESC);'''
 WATERMARK_KEY = 'signal_agent_watermark'
+# Always-in-the-market tick strategies flip hundreds of times a week; grading each flip would flood
+# the feed and the alerts. Their record stays in Live Test and the Quant Agent tab.
+UNGRADED = frozenset({'TRAILFLIP'})
 GRADES = ('A', 'B', 'C', 'X')
 GRADE_NAMES = dict(A='Proven', B='Promising', C='Unproven', X='Losing')
 KEEP_ROWS = 5000
@@ -122,11 +125,11 @@ class SignalAgent:
             entries = {}
             for r in db.execute('SELECT payload FROM live_test_positions').fetchall():
                 p = json.loads(r['payload'])
-                if (p.get('entry_time') or 0) > mark:
+                if (p.get('entry_time') or 0) > mark and p.get('strategy_id') not in UNGRADED:
                     entries[p['trade_id']] = p
             for r in db.execute('SELECT payload FROM live_test_trades WHERE closed_epoch>?', (mark,)).fetchall():
                 p = json.loads(r['payload'])
-                if (p.get('entry_time') or 0) > mark:
+                if (p.get('entry_time') or 0) > mark and p.get('strategy_id') not in UNGRADED:
                     entries.setdefault(p['trade_id'], p)
             known = {r['trade_id'] for r in db.execute(
                 f"SELECT trade_id FROM signal_feed WHERE trade_id IN ({','.join('?' * len(entries))})",

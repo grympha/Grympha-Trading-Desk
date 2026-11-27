@@ -196,6 +196,33 @@ market_scout.py` runs one sweep now and prints it. Config (optional) `market_sco
 `extra_symbols` ([]). Read-only: symbol list, symbol info, last tick and candles; hidden symbols are
 skipped, never added to Market Watch; no order API (guard test).
 
+## TrailFlip — tick-by-tick stop-and-reverse (`live_test_trailflip.py`, `TRAILFLIP`)
+
+From "TrailFlip — Strategy & User Guide" (Nov 2026). XAUUSD, always in the market: the open trade's
+stop and the opposite entry are one level that trails D behind price (long: bid − D, up only; short:
+ask + D, down only; moves of ≥ 12 % of D); price back at the level closes the trade and opens the
+opposite one at the same fill. Flat: a BUY STOP at ask + D and a SELL STOP at bid − D that only move
+toward price. D = 0.4 × ATR(M1, 14) clamped to [max(2 × median spread, 0.25 × ATR), 1 × ATR],
+refreshed each minute. Limits: no entry / reversal while spread > max(median × 1.5, p90 × 1.1);
+flips in the last hour ≥ clamp(30 × ATR / D, 10, 90) → 15 min exits only; a UTC day at −8 R
+(realised + open, the guide's 2 % ÷ 0.25 %) closes everything until the next day. Two agents: **video
+style** and **trend filter** (enter only when the 20-bar M1 efficiency ratio ≥ 0.30 or a 30 s burst
+moved ≥ D at ≥ 60 % efficiency). Stops fill at the first tick that reaches them (at the gap price if
+it jumped past) plus `slippage` $0.05; R = fill → initial level. The guide's AI supervisor, local
+model and nightly learning are not simulated. Config (optional) `trailflip`: any of the defaults in
+`TrailFlip.DEFAULTS`.
+
+**Tick mode:** a 15 s bot cycle cannot follow a $0.50 trail (gold moves ~$1 in a typical 15 s), so the
+engine (`_run_tick_agent`) fetches every MT5 tick since the agent's last cycle
+(`ReadOnlyMarketData.ticks`, read-only `copy_ticks_range`) and replays them through `run_ticks`; up to
+24 h are caught up after a restart or pause, longer gaps close the open trade as
+`RESUMED_AFTER_GAP` (DATA_GAP). The Quant Agent replays MT5 tick history through the same
+`run_ticks` (`run_tick_agents`, one day of ticks at a time; ~1 min per agent per 30 days). TrailFlip
+entries are not graded by the Signal Agent (`UNGRADED`) so hundreds of flips do not flood the feed and
+alerts. First 30-day tick backtest (28 Oct – 27 Nov 2026): video style 773 trades, 28 % win, −220 R;
+trend filter 632 trades, −210 R; the daily limit hit on ~20 of 22 days; every D tried (0.4–3 × ATR,
+slippage 0–0.05) lost.
+
 ## Command center — home page (`/home`, `home_view.py`, `js/home.js`)
 
 The launcher opens `http://127.0.0.1:<port>/home`; the dashboard logo also links there and **ENTER

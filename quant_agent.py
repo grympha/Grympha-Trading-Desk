@@ -40,6 +40,7 @@ from live_test import LiveAgent, LiveTestEngine, VALID, build_agent
 from market_data import Bar, Quote
 
 ROOT = Path(__file__).resolve().parent
+DAY_SECONDS = 86400
 TF_SECONDS = {'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800, 'H1': 3600, 'H4': 14400, 'D1': 86400}
 SAMPLE_OFFSETS = (1, 20, 40, 59)          # seconds into each M1 candle: open, extreme, extreme, close
 WARMUP_BARS = {'M1': 600, 'M5': 2100, 'M15': 600, 'M30': 400, 'H1': 600, 'H4': 600, 'D1': 200}
@@ -273,6 +274,42 @@ def jobs_for(scope, cfg, store, strategy=None, setup=None, symbol=None):
     return [(agent, symbol)]
 
 
+def load_ticks(mt5, symbol, start, end, cfg, extra=0.0, chunk=DAY_SECONDS):
+    """MT5 tick history [(epoch, bid, ask)] for [start, end], fetched one day at a time (a month of
+    gold is millions of ticks). ask gets `extra` added (spread stress test)."""
+    off = float(cfg.get('tick_timestamp_offset_hours', 0)) * 3600
+    t = start
+    while t < end:
+        b = min(end, t + chunk)
+        rows = mt5.copy_ticks_range(symbol, int(t + off), int(b + off), mt5.COPY_TICKS_INFO)
+        part = []
+        for r in rows if rows is not None else []:
+            x, bid, ask = float(r['time_msc']) / 1000 - off, float(r['bid']), float(r['ask'])
+            if t <= x < b and bid > 0 and ask >= bid:
+                part.append((x, bid, ask + extra))
+        yield part
+        t = b
+
+
+def run_tick_agents(agents, symbol, start, end, cfg, mt5, extra_spread_points=0.0):
+    """Tick-mode agents (TrailFlip): replay MT5 ticks through the agent's own run_ticks, the code
+    Live Test runs. Returns {agent: (trades, open position or None, first tick epoch)}."""
+    bars, point, digits, _ = load_history(mt5, symbol, start, end, ('M1',), cfg)
+    m1 = [Bar(int(r[0]), r[1], r[2], r[3], r[4]) for r in bars['M1']]
+    runs = {a: dict(st={}, pos=None, trades=[]) for a in agents}
+    first = None
+    for part in load_ticks(mt5, symbol, start, end, cfg, extra_spread_points * point):
+        if part and first is None:
+            first = part[0][0]
+        for a, r in runs.items():
+            closed, r['pos'] = a.run_ticks(r['st'], r['pos'], part, m1, point, digits, symbol,
+                                           f"{a.strategy_id}|{symbol}|{a.config_id}")
+            r['trades'].extend(closed)
+    if first is None:
+        raise ValueError(f'{symbol}: no tick history for this period')
+    return {a: (r['trades'], r['pos'], first) for a, r in runs.items()}
+
+
 def run(jobs, start, end, cfg, mt5, extra_spread_points=0.0, log=print):
     """Backtest every (agent, symbol). History is loaded once per symbol and shared."""
     by_symbol = defaultdict(list)
@@ -280,7 +317,30 @@ def run(jobs, start, end, cfg, mt5, extra_spread_points=0.0, log=print):
         by_symbol[symbol].append(agent)
     results, done, total = [], 0, len(jobs)
     log(f'PROGRESS 0/{total}')
-    for symbol, agents in by_symbol.items():
+    for symbol, all_agents in by_symbol.items():
+        ticky = [a for a in all_agents if getattr(a, 'tick_mode', False)]
+        agents = [a for a in all_agents if not getattr(a, 'tick_mode', False)]
+        if ticky:
+            done += len(ticky)
+            t0 = time.time()
+            try:
+                outcome = run_tick_agents(ticky, symbol, start, end, cfg, mt5, extra_spread_points)
+            except Exception as exc:
+                log(f'{symbol}: tick replay skipped ({exc})')
+                outcome = {}
+            seconds = round((time.time() - t0) / max(1, len(ticky)), 1)
+            for agent, (trades, still_open, first) in outcome.items():
+                s = summarise(trades)
+                results.append(dict(strategy_id=agent.strategy_id, label=agent.label(), symbol=symbol,
+                                    config_id=agent.config_id, setup='', start=max(start, first), end=end,
+                                    open_at_end=int(still_open is not None), stats=s, verdict=verdict(s),
+                                    seconds=seconds, trades=trades))
+                log(f"{symbol:11s} {agent.label()[:46]:46s} {s['trades']:4d} trades  "
+                    f"net {s['net_r']:+7.2f}R  avg {s['avg_r'] if s['avg_r'] is not None else 0:+.3f}R  "
+                    f"{verdict(s)}  ({seconds}s, MT5 ticks)")
+            log(f'PROGRESS {done}/{total}')
+        if not agents:
+            continue
         done += len(agents)
         try:
             bars, point, digits, tick = load_history(mt5, symbol, start, end,
