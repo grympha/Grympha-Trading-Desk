@@ -2,10 +2,13 @@
 // Live Test tab: forward-test agents on live MT5 data. Everything shown is SIMULATED.
 // Shares the global scope (core.js helpers: $, esc, fmt, date, chip, paginate, setHTML).
 'use strict';
-let liveTestData = null, liveTestReq = 0;
+let liveTestData = null, liveTestReq = 0, liveTestBusy = false;
 
-async function refreshLiveTest() {
- const req = ++liveTestReq;
+// force: after a start/pause click. The 5 s page poll never starts a second request while one is
+// still running (a newer request used to discard every slower answer, leaving "No agents yet").
+async function refreshLiveTest(force = false) {
+ if (liveTestBusy && !force) return;
+ const req = ++liveTestReq; liveTestBusy = true;
  try {
   if (demo) { liveTestData = { agents: [], recent_trades: [], simulation: true }; renderLiveTest(); return; }
   const res = await fetch('api/live-test', { cache: 'no-store' });
@@ -14,17 +17,18 @@ async function refreshLiveTest() {
   liveTestData = r; renderLiveTest();
   refreshSignalAgent();
  } catch (e) { if (req !== liveTestReq) return; liveTestData = { error: e.message, agents: [], recent_trades: [] }; renderLiveTest(); }
+ finally { if (req === liveTestReq) liveTestBusy = false; }
 }
 
 function ltControl(agentId, action) {
  fetch('api/live-test-control', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dashboard-Request': 'controls' }, body: JSON.stringify({ action, agent_id: agentId }) })
-  .then(res => { if (!res.ok) throw Error('HTTP ' + res.status); return refreshLiveTest(); })
+  .then(res => { if (!res.ok) throw Error('HTTP ' + res.status); return refreshLiveTest(true); })
   .catch(err => { const n = $('lt-note'); if (n) n.textContent = 'Control failed: ' + err.message; });
 }
 
 function ltBulk(action) {
  fetch('api/live-test-control', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dashboard-Request': 'controls' }, body: JSON.stringify({ action }) })
-  .then(res => { if (!res.ok) throw Error('HTTP ' + res.status); return refreshLiveTest(); })
+  .then(res => { if (!res.ok) throw Error('HTTP ' + res.status); return refreshLiveTest(true); })
   .catch(err => { const n = $('lt-note'); if (n) n.textContent = 'Control failed: ' + err.message; });
 }
 

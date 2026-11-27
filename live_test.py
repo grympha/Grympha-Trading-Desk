@@ -1104,9 +1104,19 @@ class LiveTestEngine:
 
     def report(self, now=None):
         now = time.time() if now is None else now
+        # One query, newest first, grouped per agent here (a query per agent took seconds at ~300 agents).
+        with self.store.connect() as db:
+            rows = db.execute('SELECT agent_id, payload FROM live_test_trades ORDER BY closed_epoch DESC').fetchall()
+        everything, by_agent = [], {}
+        for r in rows:
+            t = json.loads(r['payload'])
+            everything.append(t)
+            by_agent.setdefault(r['agent_id'], []).append(t)
+        stats = {}
         agents = []
         for la in self.agents.values():
-            trades = self.trades(la.id)
+            trades = by_agent.get(la.id, [])
+            stats[la.id] = compute_stats(trades)
             agents.append(dict(
                 id=la.id, strategy_id=la.agent.strategy_id, label=la.agent.label(),
                 symbol=la.symbol, base_symbol=la.base_symbol, config_id=la.agent.config_id,
@@ -1114,9 +1124,9 @@ class LiveTestEngine:
                 last_tick_epoch=la.last_tick_epoch, last_tick_myt=myt_iso(la.last_tick_epoch),
                 last_signal=la.last_signal, config=la.agent.config,
                 open_positions=[self._public_pos(p, now) for p in la.open_positions],
-                stats=compute_stats(trades)))
+                stats=stats[la.id]))
         recent = []
-        for t in self.trades(limit=1000):
+        for t in everything[:1000]:
             recent.append(dict(t, closed_myt=myt_iso(t.get('exit_time')), entry_myt=myt_iso(t.get('entry_time'))))
         recent_signals = []
         for s in self.signals(limit=1000):
@@ -1125,9 +1135,9 @@ class LiveTestEngine:
                     note='All entries, positions, exits and P/L are SIMULATED on live market data. '
                          'Read-only feed; no orders are sent to MT5.',
                     agents=agents, recent_trades=recent, recent_signals=recent_signals,
-                    by_symbol=self._by_symbol())
+                    by_symbol=self._by_symbol(stats))
 
-    def _by_symbol(self):
+    def _by_symbol(self, stats=None):
         """Per-symbol performance roll-up (R-based, comparable across instruments)."""
         acc = {}
 
@@ -1141,7 +1151,7 @@ class LiveTestEngine:
             if la.status == 'RUNNING':
                 d['running'] += 1
                 d['feed'] = la.feed_status
-            st = compute_stats(self.trades(la.id))
+            st = stats[la.id] if stats is not None and la.id in stats else compute_stats(self.trades(la.id))
             d['closed'] += st['total_trades']; d['valid'] += st['valid_trades']
             d['wins'] += st['wins']; d['net_r'] += st['net_r']; d['data_gap'] += st['affected_by_data']
         for s in self.signals():
