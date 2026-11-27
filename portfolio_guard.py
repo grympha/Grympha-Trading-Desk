@@ -46,7 +46,7 @@ def snapshot(mt5,cfg,candidate=None,reservations=(),exclude_key=None,now=None,st
         return dict(status='UNKNOWN',updated_epoch=now,equity=equity if finite(equity) else None,currency=currency,known_risk=0.,total_risk=None,total_percent=None,rows=[],unknown=[str(e)],by_pair={},by_currency={},by_strategy={},scope=scope)
     def add(kind,symbol,side,volume,start,sl,magic=0,ticket=None,extra_unknown=None):
         row=dict(kind=kind,symbol=symbol,side=side,volume=volume,ticket=ticket,risk=None,currency_legs=None,
-                 strategy={816001:'BBMA',816002:'CONFLUENCE',816003:'ORB'}.get(magic,'MANUAL / OTHER'),unknown=[])
+                 strategy={816001:'BBMA',816002:'CONFLUENCE',816003:'ORB',816004:'LT AGENT'}.get(magic,'MANUAL / OTHER'),unknown=[])
         if extra_unknown:row['unknown'].append(extra_unknown)
         try:
             info=mt5.symbol_info(symbol)

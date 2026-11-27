@@ -63,12 +63,15 @@ def describe(cfg):
             f"market reopens (except {', '.join(s['keep_open']) or 'none'}).")
 
 
-def close_position(ex, row, p, pos, tick, info):
-    """Close one bot position at market for the weekend. Returns True when an order was sent."""
+def close_position(ex, row, p, pos, tick, info, *, state_key='weekend_close_order', label='weekend close',
+                   operation='WEEKEND_CLOSE', note=None, volume=None):
+    """Close one bot position at market (the weekend rule; also used to mirror a Live Test agent's
+    exit or partial close with `volume`). Each `state_key` is sent once per position, never resent.
+    Returns True when an order was sent."""
     from trade_labels import action_comment
     from trade_monitor import exit_lock
     m = ex.mt5
-    state = p.get('weekend_close_order') or {}
+    state = p.get(state_key) or {}
     if state.get('status') in ('SENDING', 'ACCEPTED', 'UNCONFIRMED', 'CHECK_REJECTED', 'NO_FILLING_POLICY'):
         return False                                    # once per position; never an automatic resend
     buy = p['side'] == 'BUY'
@@ -82,24 +85,25 @@ def close_position(ex, row, p, pos, tick, info):
         filling = (m.ORDER_FILLING_FOK if flags & 1 else m.ORDER_FILLING_IOC if flags & 2
                    else m.ORDER_FILLING_RETURN if info.trade_exemode != 2 else None)
         if filling is None:
-            p['weekend_close_order'] = dict(status='NO_FILLING_POLICY', epoch=time.time())
+            p[state_key] = dict(status='NO_FILLING_POLICY', epoch=time.time())
             return False
         price = tick.bid if buy else tick.ask
-        req = dict(action=m.TRADE_ACTION_DEAL, position=int(live.ticket), symbol=row['symbol'], volume=float(live.volume),
+        req = dict(action=m.TRADE_ACTION_DEAL, position=int(live.ticket), symbol=row['symbol'],
+                   volume=float(volume if volume is not None else live.volume),
                    type=m.ORDER_TYPE_SELL if buy else m.ORDER_TYPE_BUY, price=round(price, info.digits), deviation=30,
-                   magic=int(live.magic), comment=action_comment(row['strategy'], 'weekend close'), type_filling=filling)
-        check = ex.broker_check(req, row, operation='WEEKEND_CLOSE')
+                   magic=int(live.magic), comment=action_comment(row['strategy'], label), type_filling=filling)
+        check = ex.broker_check(req, row, operation=operation)
         if getattr(check, 'retcode', None) != 0:
-            p['weekend_close_order'] = dict(status='CHECK_REJECTED', retcode=getattr(check, 'retcode', None), epoch=time.time())
+            p[state_key] = dict(status='CHECK_REJECTED', retcode=getattr(check, 'retcode', None), epoch=time.time())
             return False
-        p['weekend_close_order'] = dict(status='SENDING', epoch=time.time(), quote=price, volume=req['volume'])
-        p['note'] = describe(ex.cfg)
+        p[state_key] = dict(status='SENDING', epoch=time.time(), quote=price, volume=req['volume'])
+        p['note'] = note or describe(ex.cfg)
         ex.save(row['key'], row['status'], p)
         try:
-            reply = ex.broker_send(req, row, operation='WEEKEND_CLOSE')
+            reply = ex.broker_send(req, row, operation=operation)
         except Exception:
             reply = None
         code = getattr(reply, 'retcode', None)
-        p['weekend_close_order'].update(status='ACCEPTED' if code == 10009 else 'UNCONFIRMED', retcode=code,
-                                        deal=int(getattr(reply, 'deal', 0) or 0))
+        p[state_key].update(status='ACCEPTED' if code == 10009 else 'UNCONFIRMED', retcode=code,
+                            deal=int(getattr(reply, 'deal', 0) or 0))
         return True

@@ -288,6 +288,8 @@ input[type=date]:focus,input:not([type]):focus,select:focus{outline:2px solid #3
 .pair-score-grid label{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px}
 .pair-score-grid select{background:#0a1f1a;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit}
 .pair-score-grid label.own b{color:var(--gold,#ccae76)}
+.lt-live{display:inline-flex;gap:6px;align-items:center;margin-left:10px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;cursor:pointer}
+.lt-live.on{border-color:#c98b4a;color:#f0c27a;background:rgba(201,139,74,.12)}
 @media(max-width:900px){.strategy-form{grid-template-columns:1fr}.score-pick{grid-template-columns:1fr}}
 /* v1.25 duplicate-bot banner */
 .dup-banner{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}.dup-banner b{display:block;font-size:13px;margin-bottom:2px}.dup-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.dup-banner .button{color:#ffd7dd;border-color:#7b3845;background:#41202a}

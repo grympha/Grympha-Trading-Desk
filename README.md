@@ -144,6 +144,28 @@ Every 24 hours (and shortly after the first start) the bot saves a verified copy
 
 Every Friday from **20:00 MT5 server time** (the broker's own clock, read from the pair's latest tick, so summer/winter time follows the broker) the bot closes its open positions on every pair except **BTCUSD and ETHUSD**, cancels its pending entry orders on those pairs, and opens no new entries on them until the market reopens. Crypto keeps trading through the weekend. Only the bot's own trades are touched, never manual ones. Each close is sent once; an unconfirmed reply is shown in the Execution Ledger ("Weekend close · UNCONFIRMED") for checking in MT5 and is never resent automatically. Change it in `config.json`: `"weekend_close": {"enabled": true, "friday_time": "20:00", "keep_open": ["BTCUSD", "ETHUSD"]}`.
 
+## Live Test agents trading live (opt-in per agent × pair)
+
+Each Live Test agent card has a **Trade live** switch (off by default; a confirmation shows the agent's
+Live Test record and warns on a REAL account). Switched-on agents are listed in **Settings → Live Test
+agents trading live**, where **Stop trading live** removes them; the section is hidden when none are on.
+
+- The agent keeps running as a simulation; `agent_execution.py` hands each NEW simulated entry (seen
+  within 90 s of the simulated fill) to the executor, which places it at market with every usual check:
+  REAL-account check, risk sizing (Settings → Trade management), position cap, news filter, weekend rule,
+  duplicate-bot guard, portfolio guard, broker pre-check. Refused if price moved > 0.25R from the
+  simulated fill. Strategy trade windows and pair on/off switches do not apply (the agent's own rules do).
+- After entry the live trade **mirrors the simulation**: a tighter simulated stop (break-even / trail)
+  moves the broker SL, a simulated partial close is copied once, and when the simulated trade closes the
+  live position is closed at market. Broker SL/TP stay as a safety net (initial levels; TP capped at 20R
+  for agents with no take-profit). Exits follow up to one bot cycle (~15 s) after the simulation.
+- Magic number 816004; comments `LT <Agent> #id`, `LT agent mirror close` and so on. The ledger shows
+  `LT · <agent>`. One live trade per agent and pair at a time.
+- Switching off stops new entries only; an open live trade keeps mirroring until it closes. A paused
+  Live Test agent opens no trades. BBMA / Confluence / ORB live-copy agents cannot be switched on: they
+  already trade live as their strategy.
+- Live Test modules never import the bridge (tested); only the executor sends orders.
+
 ## Two desks on one PC (two MT5 accounts)
 
 Each desk is its own project folder with its own MT5 installation, `config.json`, database and port:

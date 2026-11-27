@@ -61,7 +61,7 @@ def build_server(store, port=8765):
             host=self.headers.get('Host','')
             if host not in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}') or origin!='http://'+host or self.headers.get('X-Dashboard-Request')!='controls' or self.headers.get('Content-Type')!='application/json':
                 return self.send(b'Forbidden','text/plain',403)
-            if self.path not in ('/api/controls','/api/pair-controls','/api/bbma-tp-mode','/api/early-exit','/api/portfolio-controls','/api/replay-settings','/api/replay-version','/api/strategy-settings','/api/duplicate-ack','/api/telegram-prefs','/api/telegram-test','/api/backup-now','/api/live-test-control','/api/quant-run'):return self.send(b'Not found','text/plain',404)
+            if self.path not in ('/api/controls','/api/pair-controls','/api/bbma-tp-mode','/api/early-exit','/api/portfolio-controls','/api/replay-settings','/api/replay-version','/api/strategy-settings','/api/duplicate-ack','/api/telegram-prefs','/api/telegram-test','/api/backup-now','/api/live-test-control','/api/quant-run','/api/agent-execution'):return self.send(b'Not found','text/plain',404)
             try:
                 size=int(self.headers.get('Content-Length','0'))
                 if not 0<size<=4096:raise ValueError('Invalid length')
@@ -117,6 +117,12 @@ def build_server(store, port=8765):
                         else:raise ValueError('Unknown action')
                     except RuntimeError as exc:return self.send(str(exc).encode(),'text/plain',409)
                     return self.send(json.dumps({'ok':True,'job':job}).encode(),'application/json')
+                if self.path=='/api/agent-execution':
+                    import agent_execution
+                    body=json.loads(self.rfile.read(size))
+                    if not isinstance(body,dict) or set(body)!={'agent_id','on'}:raise ValueError('Expected agent_id and on')
+                    agent_execution.set_enabled(store,body['agent_id'],body['on'])
+                    return self.send(json.dumps({'ok':True,'agents':agent_execution.view(store)}).encode(),'application/json')
                 if self.path=='/api/live-test-control':
                     from live_test import LiveTestEngine, build_agent
                     body=json.loads(self.rfile.read(size))
@@ -173,9 +179,18 @@ def build_server(store, port=8765):
             if path=='/api/platform':
                 from platform_monitor import summary
                 return self.send(json.dumps(summary(store),allow_nan=False).encode(),'application/json')
+            if path=='/api/agent-execution':
+                import agent_execution
+                return self.send(json.dumps({'agents':agent_execution.view(store)},allow_nan=False).encode(),'application/json')
             if path=='/api/live-test':
                 from live_test import LiveTestEngine
-                return self.send(json.dumps(LiveTestEngine(store).report(),allow_nan=False).encode(),'application/json')
+                import agent_execution
+                report=LiveTestEngine(store).report()
+                live=agent_execution.load(store)   # which agents also trade live (switched on by the user)
+                for a in report.get('agents',[]):
+                    a['trade_live']=a.get('id') in live
+                    a['trade_live_allowed']=a.get('strategy_id') not in agent_execution.EXCLUDED
+                return self.send(json.dumps(report,allow_nan=False).encode(),'application/json')
             if path=='/api/market-scout':
                 from market_scout import report_view
                 return self.send(json.dumps(report_view(store),allow_nan=False).encode(),'application/json')

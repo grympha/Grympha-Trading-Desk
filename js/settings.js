@@ -124,6 +124,33 @@ function strategySettings(s){
  const score=Number((s?.symbols||[]).find(x=>x.min_score)?.min_score??4);
  return {saved:false,bbma:{csa_reentry:true,momentum_reentry:true,mhv:!!s?.meta?.mhv_enabled},confluence:{min_score:[3,4,5].includes(score)?score:4,pair_scores:{}},orb:{...ORB_DEFAULTS}};
 }
+// ---- v1.43 Live Test agents trading live (switched on from their Live Test card) ----
+let agentsLiveRendered='',agentsLiveStatus={},agentsLiveFetched=0;
+async function setAgentLive(agentId,on){
+ const r=await fetch('api/agent-execution',{method:'POST',headers:{'Content-Type':'application/json','X-Dashboard-Request':'controls'},body:JSON.stringify({agent_id:agentId,on})});
+ if(!r.ok)throw Error(r.status===404?'Restart the dashboard to enable this (v1.43 backend).':'HTTP '+r.status);
+ agentsLiveFetched=0;await refresh();
+}
+function renderAgentsLive(s){
+ const on=s?.meta?.agent_execution||{},ids=Object.keys(on);
+ if(ids.length&&!demo&&Date.now()-agentsLiveFetched>30000){   // Live Test status (a paused agent opens no trades)
+  agentsLiveFetched=Date.now();
+  fetch('api/agent-execution',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(j=>{if(!j)return;agentsLiveStatus=Object.fromEntries(j.agents.map(a=>[a.agent_id,a.live_test_status]));agentsLiveRendered='';renderAgentsLive(data);}).catch(()=>{});
+ }
+ const status=id=>agentsLiveStatus[id];
+ const fp=JSON.stringify([on,ids.map(status)]);if(fp===agentsLiveRendered)return;agentsLiveRendered=fp;
+ $('set-agents').hidden=!ids.length;$('agents-live-count').textContent=`${ids.length} ON`;
+ const rows=ids.map(id=>({id,...on[id]})).sort((a,b)=>(a.symbol||'').localeCompare(b.symbol||'')||(a.label||'').localeCompare(b.label||''));
+ $('agents-live-rows').innerHTML=rows.map(a=>`<tr><td><b>${esc(a.label||a.strategy_id)}</b></td><td>${esc(a.symbol||'')}</td><td>${{RUNNING:'<span class="chip good">RUNNING</span>',PAUSED:'<span class="chip warn">PAUSED · no entries</span>',REMOVED:'<span class="chip bad">REMOVED · no entries</span>'}[status(a.id)]||'—'}</td><td>${a.enabled_epoch?esc(new Date(a.enabled_epoch*1000).toLocaleString()):'—'}</td><td><button type="button" class="button" data-agent-off="${esc(a.id)}" ${demo?'disabled':''}>Stop trading live</button></td></tr>`).join('');
+}
+$('agents-live-rows').addEventListener('click',async e=>{
+ const b=e.target.closest('[data-agent-off]');if(!b)return;
+ const a=(data?.meta?.agent_execution||{})[b.dataset.agentOff]||{};
+ if(!confirm(`Stop live trading for ${a.label||'this agent'} · ${a.symbol||''}?\n\nNo new live entries. An open live trade keeps copying the simulation until it closes. The agent keeps running in Live Test.`))return;
+ try{b.disabled=true;await setAgentLive(b.dataset.agentOff,false);$('agents-live-message').textContent='Stopped. The agent no longer opens live trades.';}
+ catch(err){b.disabled=false;alert('Not changed: '+err.message);}
+});
+
 // Confluence score per pair: '' = follow the default score
 function renderPairScores(s,st){
  const pairs=s?.meta?.strategies?.CONFLUENCE?.symbols||[],own=st.confluence.pair_scores||{};

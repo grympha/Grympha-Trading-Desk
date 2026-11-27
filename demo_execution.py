@@ -11,7 +11,14 @@ import sqlite3
 import time
 from weekend_close import closing_time, close_position, describe, keeps_running
 
-MAGIC={'BBMA':816001,'CONFLUENCE':816002,'ORB':816003}
+class _Magic(dict):
+    """Magic number per strategy. Every Live Test agent trading live ('AGENT:<id>') shares AGENT's."""
+    def __missing__(self,key):
+        if isinstance(key,str) and key.startswith('AGENT:'):return self['AGENT']
+        raise KeyError(key)
+
+
+MAGIC=_Magic(BBMA=816001,CONFLUENCE=816002,ORB=816003,AGENT=816004)
 BUSY={'PRECHECK','SENDING','UNCERTAIN','SUBMITTED','PENDING','OPEN','OPEN_PARTIAL','CANCEL_UNCERTAIN','REVIEW_UNKNOWN'}
 SCHEMA='''CREATE TABLE IF NOT EXISTS demo_orders (
  key TEXT PRIMARY KEY,account_hash TEXT NOT NULL,setup_key TEXT NOT NULL,strategy TEXT NOT NULL,
@@ -30,7 +37,10 @@ def identity(account):
 def public(row):
     d=json.loads(row['payload'])
     # No raw account id, token, broker login or unfiltered account info is exposed.
-    return dict(d,key=row['key'],setup_key=row['setup_key'],strategy=row['strategy'],symbol=row['symbol'],
+    strategy=row['strategy']
+    if strategy.startswith('AGENT:'):   # a Live Test agent trading live: show its name, not the ledger id
+        strategy='LT · '+str(d.get('agent_label') or 'agent')
+    return dict(d,key=row['key'],setup_key=row['setup_key'],strategy=strategy,ledger_strategy=row['strategy'],symbol=row['symbol'],
                 status=row['status'],created=row['created'],updated=row['updated'])
 
 
@@ -249,6 +259,46 @@ class DemoExecutor:
                 win=windows.get(signal['strategy'],{})
                 self.reserve(signal,'SKIPPED_WINDOW',dict(base,note=f"Outside the {signal['strategy']} trade window ({win.get('start','?')}–{win.get('end','?')} MT5 server time). No new entry is opened; open positions keep running."))
                 return
+        until=policy.news_until(signal,now)
+        def recheck():
+            if not enabled(disabled_pairs(self.store), signal['strategy'], signal['symbol']):return 'Pair is disabled for this strategy.'
+            if not policy.matches(self.store,result,signal):return 'BBMA TP mode changed before order send.'
+            return None
+        self._gated_send(signal,base,all_rows,now,until,recheck,score=result.get('score'))
+
+    def submit_agent(self,signal):
+        """A Live Test agent's fresh simulated entry (agent_execution.step), traded at market with the
+        same gates and broker path as the strategies. Its exits mirror the simulation (agent_execution.mirror)."""
+        import agent_execution
+        if not agent_execution.is_agent(signal.get('strategy')):return
+        if signal.get('agent_id') not in agent_execution.load(self.store):return
+        self.guard();now=time.time()
+        all_rows=self.rows()
+        if any(r['setup_key']==signal['key'] for r in all_rows):return
+        base=dict(context=dict(agent_id=signal['agent_id'],agent_label=signal.get('agent_label'),trade_id=signal['trade_id'],
+                               sim_entry=signal['entry'],sim_entry_epoch=signal.get('sim_entry_epoch'),tp_capped=signal.get('tp_capped'),captured_epoch=now),
+                  agent_id=signal['agent_id'],agent_label=signal.get('agent_label'),trade_id=signal['trade_id'],
+                  side=signal['side'],volume=self.lot,reference=signal['entry'],sl=signal['stop_loss'],tp1=signal['tp1'],tp2=signal['tp2'],
+                  structural_tp=signal.get('structural_tp'),decision='WAIT_BROKER',order_ticket=None,deal_ticket=None,position_id=None,position_ticket=None,
+                  note=f"{self.execution_mode} execution of Live Test agent {signal.get('agent_label')}. Exits mirror the simulation"
+                       +(f'; broker TP is a {agent_execution.NO_TP_R:g}R safety cap (the agent has no take-profit).' if signal.get('tp_capped') else '.'),
+                  currency='',profit=None,realised=None)
+        if any(r['strategy']==signal['strategy'] and r['symbol']==signal['symbol'] and r['status'] in BUSY for r in all_rows):
+            self.reserve(signal,'SKIPPED_BUSY',dict(base,note='This agent already has an active or uncertain live trade on this pair'))
+            return
+        try:
+            from trade_controls import controls
+            self.max_positions=controls(self.store,self.cfg)['max_positions']
+        except Exception:pass
+        def recheck():
+            return None if signal['agent_id'] in agent_execution.load(self.store) else 'Agent switched off for live trading before order send.'
+        self._gated_send(signal,base,all_rows,now,now,recheck)
+
+    def _gated_send(self,signal,base,all_rows,now,until,recheck,score=None):
+        """Shared entry gates and the single broker send, for the strategies and Live Test agents:
+        weekend rule, duplicate-bot pause, position cap, news, risk/request checks, portfolio guard,
+        broker pre-check, and a durable reservation BEFORE the send. Never resends."""
+        from pair_controls import entry_lock
         if closing_time(signal['symbol'],self.server_epoch(signal['symbol']),self.cfg):
             self.reserve(signal,'SKIPPED_WEEKEND',dict(base,note=describe(self.cfg)))
             return
@@ -259,12 +309,11 @@ class DemoExecutor:
             self.reserve(signal,'SKIPPED_CAPACITY',dict(base,note=f'Open-position/pending-order cap reached ({self.max_positions}, all pairs incl. manual)'))
             return
         self.news.refresh()
-        until=policy.news_until(signal,now)
         gate=self.news.check(signal['symbol'],until=until)
         base['news']=gate
         if gate['blocked']:
             self.reserve(signal,'BLOCKED_NEWS',dict(base,note=gate['note']));return
-        try:req=self.request(dict(signal,score=result.get('score')))  # score labels Confluence comments
+        try:req=self.request(dict(signal,score=score))  # score labels Confluence comments
         except Exception as exc:
             self.reserve(signal,'BLOCKED',dict(base,note=str(exc)));return
         from portfolio_guard import check_entry,PortfolioBlocked
@@ -286,11 +335,9 @@ class DemoExecutor:
             self.save(key,'BLOCKED_NEWS',dict(base,news=gate,note=gate['note']));return
         # Reserve durably BEFORE the external request. Never auto-resend an ambiguous attempt.
         with entry_lock:
-            if not enabled(disabled_pairs(self.store), signal['strategy'], signal['symbol']):
-                self.save(key,'BLOCKED',dict(base,note='Pair is disabled for this strategy.'))
-                return
-            if not policy.matches(self.store,result,signal):
-                self.save(key,'BLOCKED',dict(base,note='BBMA TP mode changed before order send.'))
+            note=recheck()
+            if note:
+                self.save(key,'BLOCKED',dict(base,note=note))
                 return
             self.guard()
             try:
@@ -408,6 +455,18 @@ class DemoExecutor:
                             continue                    # no early-exit / management on a position being closed
                     except Exception as exc:
                         p['weekend_close_note']='Weekend close could not be checked: '+str(exc)[:120]
+                if row['strategy'].startswith('AGENT:'):
+                    # Live Test agent: exits, partials and stop moves mirror its simulated trade
+                    # (no strategy early-exit monitor and no dashboard trade management).
+                    if p['decision']!='PROTECTION_REVIEW':p['decision']='MIRROR'
+                    p['note']=f"Broker-confirmed {self.execution_mode} position of Live Test agent {p.get('agent_label')}; exits mirror the simulation."
+                    try:
+                        from agent_execution import mirror
+                        mirror(self,row,p,pos)
+                    except Exception as exc:
+                        p['mirror_note']='Mirror unavailable this cycle (broker SL/TP still protect): '+str(exc)[:120]
+                    self.save(row['key'],'OPEN_PARTIAL' if p.get('partial') else 'OPEN',p)
+                    continue
                 try:
                     early_exit_sent=monitor(self,row,p,pos)
                 except Exception:

@@ -13,6 +13,8 @@ SETUPS = {'CSA_REENTRY': 'Reentry CSA', 'MOMENTUM_REENTRY': 'Reentry Momentum', 
 
 
 def strategy_name(strategy: str) -> str:
+    if str(strategy).startswith('AGENT:'):
+        return 'LT agent'                       # a Live Test agent trading live
     return {'BBMA': 'BBMA', 'CONFLUENCE': 'Confluence', 'ORB': 'ORB'}.get(strategy, str(strategy).title())
 
 
@@ -25,6 +27,8 @@ def entry_comment(strategy: str, setup: str | None, score, account_hash: str, ke
         text = 'BBMA ' + SETUPS.get(str(setup), 'Setup')
     elif strategy == 'ORB':
         text = 'ORB Retest'
+    elif str(strategy).startswith('AGENT:'):
+        text = 'LT ' + str(setup or 'agent').replace('_', ' ').title()   # e.g. 'LT Amd Po3 #a1b2c3'
     else:
         text = f'Confluence {int(score)}/5' if isinstance(score, (int, float)) and 0 < score <= 5 else 'Confluence'
     suffix = ' #' + short_id(account_hash, key)

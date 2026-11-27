@@ -94,7 +94,10 @@ function renderLiveTest() {
    + `<div><span class="stat-label">Win rate</span><strong>${wr}</strong></div>`
    + `<div><span class="stat-label">Net R</span><strong>${s.net_r ?? 0}</strong></div>`
    + `<div><span class="stat-label">Data-affected</span><strong>${s.affected_by_data ?? 0}</strong></div></div>`
-   + `<div class="card-time"><button type="button" class="button" data-lt-agent="${esc(a.id)}" data-lt-action="${running ? 'pause' : 'start'}">${running ? 'Pause agent' : 'Start agent'}</button></div></div>`;
+   + `<div class="card-time"><button type="button" class="button" data-lt-agent="${esc(a.id)}" data-lt-action="${running ? 'pause' : 'start'}">${running ? 'Pause agent' : 'Start agent'}</button>`
+   + (a.trade_live_allowed === false ? ' <span class="muted small">Trades live as its strategy</span>'
+     : ` <label class="lt-live${a.trade_live ? ' on' : ''}" title="Place this agent's new entries on MT5 too (real orders)"><input type="checkbox" data-lt-live="${esc(a.id)}" ${a.trade_live ? 'checked' : ''} ${demo ? 'disabled' : ''}> Trade live${a.trade_live ? ' · ON' : ''}</label>`)
+   + '</div></div>';
  }).join('') : '<p class="muted">No Live Test agents registered yet. Start the bot to initialise the default agents.</p>');
 
  const positions = [];
@@ -161,6 +164,25 @@ function ltCsvDownload(rows, name) {
 
 // ---- wire static controls (panel elements exist at load) ----
 $('lt-agents').addEventListener('click', e => { const b = e.target.closest('[data-lt-agent]'); if (b) ltControl(b.dataset.ltAgent, b.dataset.ltAction); });
+// "Trade live" switch: the agent's NEW simulated entries are also placed on MT5 (listed in Settings).
+$('lt-agents').addEventListener('change', async e => {
+ const box = e.target.closest('[data-lt-live]'); if (!box) return;
+ const a = ((liveTestData && liveTestData.agents) || []).find(x => x.id === box.dataset.ltLive) || {}, on = box.checked;
+ const s = a.stats || {}, real = document.body.classList.contains('real-account');
+ const msg = on
+  ? `Trade ${a.label || a.strategy_id} · ${a.symbol} LIVE?\n\nIts NEW simulated entries will also be placed on MT5 at market, sized by Settings → Trade management, with the usual position cap, news filter, weekend rule and duplicate guard. Exits, partial closes and stop moves copy the simulation.\n\nLive Test record: ${s.valid_trades ?? 0} trades · net ${Number(s.net_r || 0) >= 0 ? '+' : ''}${Number(s.net_r || 0).toFixed(2)}R.`
+    + (a.status !== 'RUNNING' ? '\n\nThis agent is PAUSED in Live Test: start it, or it opens no trades.' : '')
+    + (real ? '\n\n⚠ This is a REAL account. Real money.' : '')
+  : `Stop live trading for ${a.label || a.strategy_id} · ${a.symbol}?\n\nNo new live entries. An open live trade keeps copying the simulation until it closes.`;
+ if (!confirm(msg)) { box.checked = !on; return; }
+ box.disabled = true;
+ try {
+  const res = await fetch('api/agent-execution', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dashboard-Request': 'controls' }, body: JSON.stringify({ agent_id: box.dataset.ltLive, on }) });
+  if (!res.ok) throw Error(res.status === 404 ? 'restart the dashboard (v1.43 backend)' : res.status === 400 ? 'agent not allowed or unknown' : 'HTTP ' + res.status);
+  await refreshLiveTest(true);
+  if (typeof refresh === 'function') refresh();
+ } catch (err) { box.checked = !on; box.disabled = false; const n = $('lt-note'); if (n) n.textContent = 'Trade live not changed: ' + err.message; }
+});
 for (const id of ['lt-filter-strategy', 'lt-filter-symbol', 'lt-filter-reason', 'lt-filter-status']) $(id).addEventListener('change', renderLiveTest);
 $('lt-csv-filtered').addEventListener('click', () => ltCsvDownload(ltFiltered(), 'live_test_trades_filtered.csv'));
 $('lt-csv-all').addEventListener('click', () => { if (demo) { ltCsvDownload(ltRows(), 'live_test_trades.csv'); return; } location.href = 'api/live-test.csv'; });

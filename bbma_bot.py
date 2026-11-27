@@ -500,6 +500,15 @@ def _run(args):
                     live_engine.run(ReadOnlyMarketData(mt5,cfg))  # SIMULATION ONLY · read-only feed, never the executor
                 except Exception as exc:
                     logging.warning('Live Test cycle skipped: %s', exc)
+                if executor:
+                    # Agents switched on for live trading: their fresh simulated entries go to the
+                    # executor (all the usual live checks); exits mirror the simulation in refresh().
+                    try:
+                        import agent_execution
+                        n=agent_execution.step(executor)
+                        if n:print(f'Live Test agents trading live: {n} new entr{"y" if n==1 else "ies"} handed to the executor',flush=True)
+                    except Exception as exc:
+                        logging.warning('Live Test agent execution skipped: %s', exc)
                 if signal_agent:
                     try:signal_agent.update()
                     except Exception as exc:logging.warning('Signal Agent cycle skipped: %s', exc)

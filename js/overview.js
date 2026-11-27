@@ -14,7 +14,7 @@ function render(){
  const page=typeof currentPage==='function'?currentPage():'overview';
  renderDemo(s);renderDesk(s);renderAccount(s);
  if(page==='positions')renderActual(s);
- if(page==='settings'){renderControls(s);renderPairControls(s);renderNews(s);renderStrategySettings(s);renderTelegram(s);}
+ if(page==='settings'){renderControls(s);renderPairControls(s);renderNews(s);renderStrategySettings(s);renderAgentsLive(s);renderTelegram(s);}
  if(page==='review'){renderReview();renderAI();}
  if(page==='monitor'){renderPlatform();renderBackup(s);}
  if(page==='lab')renderLab();
