@@ -101,7 +101,8 @@ class ReadOnlyGuard(unittest.TestCase):
                      'live_test_orb.py', 'live_test_h4_swing.py', 'live_test_ny_london.py',
                      'live_test_ifvg.py', 'live_test_momentum.py', 'live_test_advocate.py',
                      'live_test_amd.py', 'live_test_bbma.py', 'live_test_confluence.py',
-                     'live_test_live_orb.py', 'quant_agent.py', 'signal_agent.py', 'market_scout.py'):
+                     'live_test_live_orb.py', 'quant_agent.py', 'signal_agent.py', 'market_scout.py',
+                     'quant_runner.py', 'home_view.py'):
             code = self._code_only(name)
             for tok in self.FORBIDDEN:
                 self.assertNotIn(tok, code, f'{name} code must not reference {tok!r} (read-only Live Test)')

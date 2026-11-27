@@ -57,7 +57,7 @@ def build_server(store, port=8765):
             host=self.headers.get('Host','')
             if host not in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}') or origin!='http://'+host or self.headers.get('X-Dashboard-Request')!='controls' or self.headers.get('Content-Type')!='application/json':
                 return self.send(b'Forbidden','text/plain',403)
-            if self.path not in ('/api/controls','/api/pair-controls','/api/bbma-tp-mode','/api/early-exit','/api/portfolio-controls','/api/replay-settings','/api/replay-version','/api/strategy-settings','/api/duplicate-ack','/api/telegram-prefs','/api/telegram-test','/api/backup-now','/api/live-test-control'):return self.send(b'Not found','text/plain',404)
+            if self.path not in ('/api/controls','/api/pair-controls','/api/bbma-tp-mode','/api/early-exit','/api/portfolio-controls','/api/replay-settings','/api/replay-version','/api/strategy-settings','/api/duplicate-ack','/api/telegram-prefs','/api/telegram-test','/api/backup-now','/api/live-test-control','/api/quant-run'):return self.send(b'Not found','text/plain',404)
             try:
                 size=int(self.headers.get('Content-Length','0'))
                 if not 0<size<=4096:raise ValueError('Invalid length')
@@ -99,6 +99,19 @@ def build_server(store, port=8765):
                     from strategy_settings import save as save_strategy
                     saved=save_strategy(store,json.loads(self.rfile.read(size)))
                     return self.send(json.dumps({'ok':True,'settings':saved}).encode(),'application/json')
+                if self.path=='/api/quant-run':
+                    import quant_runner
+                    body=json.loads(self.rfile.read(size))
+                    if not isinstance(body,dict):raise ValueError('Invalid backtest request')
+                    try:
+                        if body.get('action')=='stop':job=quant_runner.stop(store)
+                        elif body.get('action')=='start':
+                            days=body.get('days')
+                            if not isinstance(days,int) or isinstance(days,bool):raise ValueError('Invalid days')
+                            job=quant_runner.start(store,str(body.get('strategy') or ''),str(body.get('symbol') or 'ALL'),days)
+                        else:raise ValueError('Unknown action')
+                    except RuntimeError as exc:return self.send(str(exc).encode(),'text/plain',409)
+                    return self.send(json.dumps({'ok':True,'job':job}).encode(),'application/json')
                 if self.path=='/api/live-test-control':
                     from live_test import LiveTestEngine, build_agent
                     body=json.loads(self.rfile.read(size))
@@ -164,6 +177,10 @@ def build_server(store, port=8765):
             if path=='/api/quant-agent':
                 from quant_agent import report_view as quant_view
                 return self.send(json.dumps(quant_view(store),allow_nan=False).encode(),'application/json')
+            if path=='/api/quant-run':
+                import quant_runner
+                body={'options':quant_runner.options(store),'days':list(quant_runner.DAY_CHOICES),'job':quant_runner.status(store)}
+                return self.send(json.dumps(body,allow_nan=False).encode(),'application/json')
             if path=='/api/home':
                 from home_view import build as home_build
                 return self.send(json.dumps(home_build(store),allow_nan=False).encode(),'application/json')

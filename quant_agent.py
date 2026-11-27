@@ -231,6 +231,25 @@ def load_history(mt5, symbol, start, end, timeframes, cfg):
 
 
 # --------------------------------------------------------------------------- runs
+def registered_jobs(store, strategies=None, symbols=None):
+    """[(agent, symbol)] for the agents registered in Live Test right now (not removed), rebuilt from
+    their saved config so each result lands on the same agent id the dashboard and Signal Agent use."""
+    with store.connect() as db:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        rows = db.execute('SELECT id, strategy_id, symbol, config, status FROM live_test_agents').fetchall()             if 'live_test_agents' in tables else []
+    jobs = []
+    for r in rows:
+        if r['status'] == 'REMOVED' or (strategies and r['strategy_id'] not in strategies)                 or (symbols and r['symbol'] not in symbols):
+            continue
+        try:
+            agent = build_agent(r['strategy_id'], json.loads(r['config'] or '{}'))
+        except Exception:
+            agent = None
+        if agent is not None and f"{agent.strategy_id}|{r['symbol']}|{agent.config_id}" == r['id']:
+            jobs.append((agent, r['symbol']))
+    return jobs
+
+
 def jobs_for(scope, cfg, store, strategy=None, setup=None, symbol=None):
     """[(agent, symbol)] to backtest. scope: 'one' | 'live' | 'all'."""
     from live_test import LiveTestEngine as _E, ensure_default_agents, live_strategy_agents
@@ -259,13 +278,16 @@ def run(jobs, start, end, cfg, mt5, extra_spread_points=0.0, log=print):
     by_symbol = defaultdict(list)
     for agent, symbol in jobs:
         by_symbol[symbol].append(agent)
-    results = []
+    results, done, total = [], 0, len(jobs)
+    log(f'PROGRESS 0/{total}')
     for symbol, agents in by_symbol.items():
+        done += len(agents)
         try:
             bars, point, digits, tick = load_history(mt5, symbol, start, end,
                                                      ('M1', 'M5', 'M15', 'M30', 'H1', 'H4'), cfg)
         except Exception as exc:
             log(f'{symbol}: skipped ({exc})')
+            log(f'PROGRESS {done}/{total}')
             continue
         first = bars['M1'][0][0] if bars['M1'] else end
         t0 = time.time()
@@ -283,6 +305,7 @@ def run(jobs, start, end, cfg, mt5, extra_spread_points=0.0, log=print):
             log(f"{symbol:11s} {agent.label()[:46]:46s} {s['trades']:4d} trades  "
                 f"net {s['net_r']:+7.2f}R  avg {s['avg_r'] if s['avg_r'] is not None else 0:+.3f}R  "
                 f"{row['verdict']}  ({row['seconds']}s)")
+        log(f'PROGRESS {done}/{total}')
     return results
 
 
@@ -431,7 +454,10 @@ def main(argv=None):
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument('--strategy', help='strategy_id, e.g. LIVE_BBMA, LIVE_CONFLUENCE, CMS_SSR')
     g.add_argument('--live', action='store_true', help='every live-strategy agent (BBMA, Confluence, ORB) on its pairs')
-    g.add_argument('--all', action='store_true', help='every registered Live Test agent')
+    g.add_argument('--all', action='store_true', help='every default Live Test agent')
+    g.add_argument('--registered', action='store_true',
+                   help='the agents registered in Live Test now (their saved settings); filter with --strategies/--symbols')
+    p.add_argument('--strategies', help='comma-separated strategy_id filter for --registered')
     p.add_argument('--setup', help='BBMA setup: CSA_REENTRY, MOMENTUM_REENTRY or MHV_REVERSAL')
     p.add_argument('--symbol', default='XAUUSD')
     p.add_argument('--symbols', help='comma-separated filter for --live/--all')
@@ -445,11 +471,16 @@ def main(argv=None):
     cfg = json.loads((ROOT / 'config.json').read_text(encoding='utf-8-sig'))
     from dashboard_store import Store
     store = Store(ROOT / 'dashboard.sqlite3')
-    scope = 'live' if a.live else 'all' if a.all else 'one'
-    jobs = jobs_for(scope, cfg, store, a.strategy, a.setup, a.symbol)
+    if a.registered:
+        jobs = registered_jobs(store, {s.strip() for s in a.strategies.split(',')} if a.strategies else None)
+    else:
+        scope = 'live' if a.live else 'all' if a.all else 'one'
+        jobs = jobs_for(scope, cfg, store, a.strategy, a.setup, a.symbol)
     if a.symbols:
         keep = {s.strip() for s in a.symbols.split(',')}
         jobs = [j for j in jobs if j[1] in keep]
+    if not jobs:
+        raise SystemExit('Nothing to backtest: no matching agent.')
     end = time.time()
     start = end - a.days * 86400
     import MetaTrader5 as mt5
@@ -457,7 +488,7 @@ def main(argv=None):
         raise SystemExit('Cannot connect to MT5.')
     try:
         print(f'Quant Agent: {len(jobs)} runs, {a.days:g} days. Read-only; no order is sent.', flush=True)
-        results = run(jobs, start, end, cfg, mt5, a.extra_spread_points)
+        results = run(jobs, start, end, cfg, mt5, a.extra_spread_points, log=lambda m: print(m, flush=True))
     finally:
         mt5.shutdown()
     paths = write_reports(results, ROOT / 'reports', start, end, a.extra_spread_points)

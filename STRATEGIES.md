@@ -120,9 +120,15 @@ candle becomes four quotes (open, the two extremes in their likely order, close)
 writes to the dashboard database is the newest result per agent (`quant_results`, read by the Signal
 Agent; `--extra-spread-points` stress runs are not saved). No order API exists in it (guard test).
 Dashboard → **Quant Agent** tab (`/api/quant-agent`) shows every saved backtest beside the same
-agent's Live Test record and status, filterable by verdict and strategy.
+agent's Live Test record and status, filterable by verdict and strategy. **Run a backtest** on that
+tab picks a strategy, a pair (or all its pairs) and 7–180 days of history, then starts
+`quant_agent.py --registered` as a separate process (`quant_runner.py`, `/api/quant-run`; it opens its
+own MT5 connection so the bot's is untouched). One run at a time; the tab shows "Backtest running"
+with progress and a Stop button, then the result (or the last output lines if it failed); the table
+switches to that strategy. Output goes to `reports/quant_dashboard_run.log`.
 
 ```
+python quant_agent.py --registered --strategies ADVOCATE_EMA_PULLBACK --days 30   # what the tab runs
 python quant_agent.py --live --days 30                          # every live-strategy agent, all pairs
 python quant_agent.py --strategy LIVE_BBMA --setup CSA_REENTRY --symbol GBPAUD --days 60
 python quant_agent.py --all --days 14 --symbols XAUUSD,EURUSD   # every Live Test agent on two pairs
