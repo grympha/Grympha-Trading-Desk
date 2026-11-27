@@ -140,6 +140,10 @@ Every 24 hours (and shortly after the first start) the bot saves a verified copy
 
 **Restore:** stop the bot, copy `backups/<date_time>/dashboard.sqlite3` over `dashboard.sqlite3`, delete `dashboard.sqlite3-wal` and `dashboard.sqlite3-shm` if present, then start the bot.
 
+## Weekend rule: no positions over the weekend
+
+Every Friday from **20:00 MT5 server time** (the broker's own clock, read from the pair's latest tick, so summer/winter time follows the broker) the bot closes its open positions on every pair except **BTCUSD and ETHUSD**, cancels its pending entry orders on those pairs, and opens no new entries on them until the market reopens. Crypto keeps trading through the weekend. Only the bot's own trades are touched, never manual ones. Each close is sent once; an unconfirmed reply is shown in the Execution Ledger ("Weekend close · UNCONFIRMED") for checking in MT5 and is never resent automatically. Change it in `config.json`: `"weekend_close": {"enabled": true, "friday_time": "20:00", "keep_open": ["BTCUSD", "ETHUSD"]}`.
+
 ## Two desks on one PC (two MT5 accounts)
 
 Each desk is its own project folder with its own MT5 installation, `config.json`, database and port:

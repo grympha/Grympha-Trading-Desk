@@ -9,6 +9,7 @@ import math
 import logging
 import sqlite3
 import time
+from weekend_close import closing_time, close_position, describe, keeps_running
 
 MAGIC={'BBMA':816001,'CONFLUENCE':816002,'ORB':816003}
 BUSY={'PRECHECK','SENDING','UNCERTAIN','SUBMITTED','PENDING','OPEN','OPEN_PARTIAL','CANCEL_UNCERTAIN','REVIEW_UNKNOWN'}
@@ -193,6 +194,15 @@ class DemoExecutor:
         self.last_quote=dict(bid=float(tick.bid),ask=float(tick.ask),spread_points=(tick.ask-tick.bid)/info.point,broker_epoch=int(tick.time),captured_epoch=time.time())
         return info,tick
 
+    def server_epoch(self,symbol):
+        """MT5 server time now: the pair's latest tick time (the broker's own clock), else the configured offset."""
+        try:
+            tick=self.mt5.symbol_info_tick(symbol)
+            if tick is not None and tick.time and abs(time.time()-(tick.time-float(self.cfg.get('tick_timestamp_offset_hours',0))*3600))<=300:
+                return int(tick.time)
+        except Exception:pass
+        return int(time.time()+float(self.cfg.get('tick_timestamp_offset_hours',0))*3600)
+
     def request(self,signal):
         request=self.risk_check.request(signal,self.account_hash,quote=self.quote)
         self.last_risk=self.risk_check.last_risk
@@ -239,6 +249,9 @@ class DemoExecutor:
                 win=windows.get(signal['strategy'],{})
                 self.reserve(signal,'SKIPPED_WINDOW',dict(base,note=f"Outside the {signal['strategy']} trade window ({win.get('start','?')}–{win.get('end','?')} MT5 server time). No new entry is opened; open positions keep running."))
                 return
+        if closing_time(signal['symbol'],self.server_epoch(signal['symbol']),self.cfg):
+            self.reserve(signal,'SKIPPED_WEEKEND',dict(base,note=describe(self.cfg)))
+            return
         if getattr(self,'duplicate_block',False):
             self.reserve(signal,'BLOCKED',dict(base,note='Paused: another bot copy is trading this account (System Health). Acknowledge there to resume.'))
             return
@@ -385,6 +398,16 @@ class DemoExecutor:
                 if history is not None:
                     p['realised_to_date']=sum(float(d.profit)+float(d.commission)+float(d.swap)+float(getattr(d,'fee',0)) for d in history)
                 p['note']=f'Broker-confirmed {self.execution_mode} position. Signal close flags remain review-only; optional management is logged separately.'
+                # Weekend rule: from Friday 20:00 MT5 time, non-crypto positions are closed (no weekend holding).
+                if p['quote_fresh'] and not keeps_running(row['symbol'],self.cfg):
+                    try:
+                        info,tick=self.quote(row['symbol'])
+                        if closing_time(row['symbol'],tick.time,self.cfg):
+                            close_position(self,row,p,pos,tick,info)
+                            self.save(row['key'],'OPEN_PARTIAL' if p.get('partial') else 'OPEN',p)
+                            continue                    # no early-exit / management on a position being closed
+                    except Exception as exc:
+                        p['weekend_close_note']='Weekend close could not be checked: '+str(exc)[:120]
                 try:
                     early_exit_sent=monitor(self,row,p,pos)
                 except Exception:
@@ -408,6 +431,8 @@ class DemoExecutor:
                 invalid=gate['blocked'] or analysis_fresh and analysis['condition'].get('side')!=p['side']
                 if not enabled(disabled, row['strategy'], row['symbol']):
                     reason = 'Pair disabled for this strategy; cancelling its pending entry.'
+                elif closing_time(row['symbol'],self.server_epoch(row['symbol']),self.cfg):
+                    reason = 'Weekend rule: pending entry cancelled from Friday 20:00 MT5 time (no weekend holding).'
                 elif expired or invalid:
                     reason = 'Own pending order expired, news blocked, or strategy invalidated before fill.'
                 else:

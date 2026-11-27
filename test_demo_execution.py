@@ -12,6 +12,12 @@ from demo_execution import DemoExecutor
 
 stamp=lambda t:datetime.fromtimestamp(t,timezone.utc).isoformat()
 
+# The fake broker's clock is the real time, so the Friday-20:00 weekend rule would make these tests
+# depend on the day they run. It is off for them and tested on a fixed clock in test_weekend_close.py
+# (those tests switch it on in their own config).
+import weekend_close
+weekend_close.DEFAULTS['enabled']=False
+
 class FakeMT5:
     ACCOUNT_TRADE_MODE_DEMO=0;ACCOUNT_MARGIN_MODE_RETAIL_HEDGING=2
     TRADE_ACTION_DEAL=1;TRADE_ACTION_PENDING=5;TRADE_ACTION_REMOVE=8
