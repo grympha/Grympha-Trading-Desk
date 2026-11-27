@@ -12,7 +12,9 @@ async function refreshScout() {
  } catch (e) { scoutData = { error: e.message, rows: [], recommendations: [], skipped: [] }; renderScout(); }
 }
 const MS_ROLE = { LIVE: 'Live', LIVE_TEST: 'Live Test', CANDIDATE: 'Candidate' };
-const MS_KIND = { NEWS: 'warn', COST: 'bad', VOLATILITY: 'warn', TREND: 'good', ADD: 'good' };
+const MS_ORDER = { LIVE: 0, LIVE_TEST: 1, CANDIDATE: 2 };
+const MS_FILTER = { MINE: 'My pairs', LIVE: 'Live pairs', LIVE_TEST: 'Live-Test-only pairs', CANDIDATE: 'Candidates', ALL: 'All markets' };
+const MS_KIND ={ NEWS: 'warn', COST: 'bad', VOLATILITY: 'warn', TREND: 'good', ADD: 'good' };
 function msPct(v) { return v == null ? '—' : (v * 100).toFixed(v < 0.1 ? 1 : 0) + '%'; }
 function msWhen(m) { return m < 120 ? 'in ' + m + ' min' : 'in ' + (m / 60).toFixed(1) + ' h'; }
 function renderScout() {
@@ -25,7 +27,11 @@ function renderScout() {
   `<div class="health-card"><div>${chip(x.kind, MS_KIND[x.kind] || '')}</div><p class="small" style="margin:6px 0 0">${esc(x.text)}</p></div>`).join('')
   : '<p class="muted small">Nothing stands out right now.</p>');
  const want = $('ms-filter-role').value;
- const rows = (r.rows || []).filter(x => want === 'ALL' || x.role === want);
+ const all = r.rows || [], count = k => all.filter(x => k === 'ALL' || (k === 'MINE' ? x.role !== 'CANDIDATE' : x.role === k)).length;
+ for (const o of $('ms-filter-role').options) o.textContent = MS_FILTER[o.value] + ' (' + count(o.value) + ')';
+ // Your pairs first (Live, then Live Test), best score first inside each group; candidates last.
+ const rows = all.filter(x => want === 'ALL' || (want === 'MINE' ? x.role !== 'CANDIDATE' : x.role === want))
+  .sort((a, b) => (MS_ORDER[a.role] ?? 9) - (MS_ORDER[b.role] ?? 9) || b.score - a.score || a.symbol.localeCompare(b.symbol));
  paginate('ms-rows', 'ms-rows-pager', rows, x => {
   const v = x.volatility || {}, t = x.trend || {}, n = (x.news || [])[0];
   const sc = x.score >= 65 ? 'good' : x.score < 40 ? 'bad' : '';
@@ -38,7 +44,7 @@ function renderScout() {
    + `<td>${chip(v.regime || '—', vCls)}<small class="muted"> ${v.ratio == null ? '' : v.ratio.toFixed(1) + '×'}</small></td>`
    + `<td>${chip(t.label || '—', tCls)}</td>`
    + `<td class="small">${n ? esc(`${n.currency} · ${n.title} · ${msWhen(n.minutes)}`) : '<span class="muted">none in 24 h</span>'}</td></tr>`;
- }, { pageSize: 15, colspan: 8, empty: 'No markets match this filter.' });
+ }, { pageSize: 20, colspan: 8, empty: 'No markets match this filter.' });
  $('ms-skipped').textContent = (r.skipped || []).length ? 'Skipped: ' + r.skipped.map(s => `${s.symbol} (${s.reason})`).join(', ') : '';
 }
 $('ms-filter-role').addEventListener('change', renderScout);
