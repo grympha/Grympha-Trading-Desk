@@ -973,7 +973,7 @@ class LiveTestEngine:
 
     def _load(self):
         with self.store.connect() as db:
-            for r in db.execute('SELECT * FROM live_test_agents'):
+            for r in db.execute("SELECT * FROM live_test_agents WHERE status!='REMOVED'"):   # retired: trades kept only
                 cfg = json.loads(r['config'])
                 agent = build_agent(r['strategy_id'], cfg)
                 if agent is None:
@@ -997,7 +997,7 @@ class LiveTestEngine:
     def _sync(self):
         """Pick up start/pause and newly registered agents written by the dashboard server."""
         with self.store.connect() as db:
-            rows = list(db.execute('SELECT * FROM live_test_agents'))
+            rows = list(db.execute("SELECT * FROM live_test_agents WHERE status!='REMOVED'"))
         seen = set()
         for r in rows:
             seen.add(r['id'])
@@ -1433,14 +1433,25 @@ def ensure_default_agents(engine, cfg=None):
     for _m in amd_models:
         _reg(build_agent('AMD_PO3', {**{k: v for k, v in amd_cfg.items() if k != 'models'},
                                      'model': _m}), 'XAUUSD')
-    # TrailFlip (tick-by-tick stop-and-reverse), XAUUSD: video style and the trend-filter variant.
-    # A new TrailFlip agent starts RUNNING when the pair's other agents are running.
-    tf_cfg = cfg.get('trailflip') or {}
-    gold_running = any(la.status == 'RUNNING' for la in engine.agents.values() if la.base_symbol == 'XAUUSD')
-    for video in (True, False):
-        agent = build_agent('TRAILFLIP', {**tf_cfg, 'video_style': video})
-        if agent is not None and f"{agent.strategy_id}|XAUUSD|{agent.config_id}" not in engine.agents:
-            engine.register(agent, 'XAUUSD', 'RUNNING' if gold_running else 'PAUSED')
+    # TrailFlip (tick-by-tick stop-and-reverse), XAUUSD: one agent on the desk settings (version H:
+    # trend filter, 2 x ATR trail, London open to New York close, no daily stop). Any other TrailFlip
+    # version is retired (REMOVED: never runs again, its trades stay in the history). The new agent
+    # starts RUNNING when a retired one was running or the pair's other agents are running.
+    agent = build_agent('TRAILFLIP', cfg.get('trailflip') or {})
+    if agent is not None:
+        aid = f"{agent.strategy_id}|XAUUSD|{agent.config_id}"
+        with engine.store.connect() as db:
+            old = db.execute("SELECT id, status FROM live_test_agents WHERE strategy_id='TRAILFLIP' AND id!=? "
+                             "AND status!='REMOVED'", (aid,)).fetchall()
+            db.execute("UPDATE live_test_agents SET status='REMOVED' WHERE strategy_id='TRAILFLIP' AND id!=?", (aid,))
+        for r in old:
+            engine.agents.pop(r['id'], None)
+        for k in [k for k, la in engine.agents.items() if la.agent.strategy_id == 'TRAILFLIP' and la.id != aid]:
+            engine.agents.pop(k, None)
+        running = any(r['status'] == 'RUNNING' for r in old) or any(
+            la.status == 'RUNNING' for la in engine.agents.values() if la.base_symbol == 'XAUUSD')
+        if aid not in engine.agents:
+            engine.register(agent, 'XAUUSD', 'RUNNING' if running else 'PAUSED')
     # The live-execution strategies, simulated, on the current live dashboard settings.
     sync_live_strategy_agents(engine, cfg)
 

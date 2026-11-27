@@ -18,6 +18,14 @@ opposite entry are the same price, and that price trails D behind the market.
     ratio (20 bars) is above 0.30 or price made a fast straight burst (last 30 s: net move >= D at
     >= 60% efficiency).
 
+Desk defaults (version H, Nov 2026), chosen from a 20-day tick backtest of ten variants: the guide's
+0.4 x ATR trail paid ~0.28 R of spread + slippage on every flip and lost most of its money at the UTC
+day open, so the desk runs the trend filter with a 2 x ATR trail (cap 2 x ATR), trades only from
+London 08:00 to New York 17:00 (DST-aware; outside it no entries or flips, and an open trade closes
+at the session end as SESSION_END), and has no daily loss stop (daily_loss_r=None). The guide's
+settings stay available: video_style=True, trail_atr=0.4, max_atr_frac=1.0, session_start_hour=None,
+daily_loss_r=8.
+
 Fills: a stop fills at the first tick that reaches it, at that tick's price if it gapped past the
 level, and `slippage` (price units, $0.05 on gold as in the guide's replay test) worse. R is the
 fill-to-initial-level distance, so every trade is comparable with the other Live Test agents.
@@ -34,6 +42,8 @@ from __future__ import annotations
 import bisect
 import hashlib
 from collections import deque
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from live_test import VALID, DATA_GAP, atr, config_id
 from market_hours import unexplained_gap_seconds
@@ -49,19 +59,22 @@ def _median(xs):
 
 class TrailFlip:
     strategy_id = 'TRAILFLIP'
-    version = 'trailflip@1'
+    version = 'trailflip@2'
     tick_mode = True             # the engine feeds every tick (run_ticks), not one quote per cycle
     needs_market = False
     timeframe = 'M1'
 
     DEFAULTS = dict(
-        video_style=True,
-        trail_atr=0.4, atr_period=14, min_spread_mult=2.0, min_atr_frac=0.25, max_atr_frac=1.0,
+        video_style=False,
+        trail_atr=2.0, atr_period=14, min_spread_mult=2.0, min_atr_frac=0.25, max_atr_frac=2.0,
         stops_level=0.0, step_frac=0.12,
         spread_median_mult=1.5, spread_p90_mult=1.1, spread_warmup=30,
         flips_per_atr=30.0, min_flips_hour=10, max_flips_hour=90, cooldown_seconds=900,
-        daily_loss_r=8.0, slippage=0.05,
+        daily_loss_r=None, slippage=0.05,
         er_bars=20, er_threshold=0.30, burst_seconds=30, burst_efficiency=0.6,
+        # trading hours: from London open to the New York close (None = around the clock)
+        session_start_tz='Europe/London', session_start_hour=8,
+        session_end_tz='America/New_York', session_end_hour=17,
         max_gap_seconds=120, max_catchup_seconds=86400, max_positions=1)
 
     def __init__(self, config: dict | None = None):
@@ -73,7 +86,26 @@ class TrailFlip:
         self._mids = deque()
 
     def label(self):
-        return 'TrailFlip · video style (tick)' if self.config['video_style'] else 'TrailFlip · trend filter (tick)'
+        c = self.config
+        style = 'video style' if c['video_style'] else 'trend filter'
+        hours = ' · London–NY' if c.get('session_start_hour') is not None else ''
+        return f"TrailFlip · {style} {c['trail_atr']:g}×ATR{hours} (tick)"
+
+    def _in_session(self, st, t):
+        """True between London open and the New York close (each in its own time zone, so daylight
+        saving is followed). The window is worked out once a minute and kept in the state."""
+        c = self.config
+        if c.get('session_start_hour') is None:
+            return True
+        if t >= st.get('sess_next', 0):
+            s_tz, e_tz = ZoneInfo(c['session_start_tz']), ZoneInfo(c['session_end_tz'])
+            start = datetime.fromtimestamp(t, s_tz).replace(hour=int(c['session_start_hour']), minute=0, second=0,
+                                                             microsecond=0).timestamp()
+            end = datetime.fromtimestamp(t, e_tz).replace(hour=int(c['session_end_hour']), minute=0, second=0,
+                                                           microsecond=0).timestamp()
+            st['sess'], st['sess_next'] = [start, end], t - t % 60 + 60
+        start, end = st['sess']
+        return start <= t < end
 
     def evaluate(self, *args, **kwargs):        # never used: tick-mode agents run through run_ticks()
         return None
@@ -110,7 +142,9 @@ class TrailFlip:
     def _why_blocked(self, st, t, spread):
         if not st.get('ready'):
             return 'WARMING_UP'
-        if st.get('halted_day') == int(t // DAY):
+        if not self._in_session(st, t):
+            return 'OUT_OF_SESSION'
+        if self.config['daily_loss_r'] and st.get('halted_day') == int(t // DAY):
             return 'DAILY_LIMIT'
         if t < st.get('cooldown_until', 0):
             return 'FLIP_COOLDOWN'
@@ -191,13 +225,19 @@ class TrailFlip:
                 r = pnl / pos['risk'] if pos['risk'] else 0.0
                 pos.update(last_sample_epoch=t, last_price=basis, current_price=basis, unrealized_pnl=pnl,
                            unrealized_r=r, mfe_r=round(max(pos['mfe_r'], r), 4), mae_r=round(min(pos['mae_r'], r), 4))
-                hit = (bid <= level) if buy else (ask >= level)
+                if not self._in_session(st, t):                  # New York close: flat until London opens
+                    closed.append(self._close(st, pos, round(basis - slip if buy else basis + slip, digits),
+                                              t, spread, 'SESSION_END', False))
+                    pos, st['blocked'] = None, 'OUT_OF_SESSION'
+                    st['buy_stop'] = st['sell_stop'] = None
+                    continue
+                hit =(bid <= level) if buy else (ask >= level)
                 if hit:
                     fill = (min(level, bid) - slip) if buy else (max(level, ask) + slip)
                     fill = round(fill, digits)
                     after = st.get('day_r', 0.0) + (((fill - pos['entry_price']) if buy else (pos['entry_price'] - fill))
                                                     / pos['risk'] if pos['risk'] and pos['data_quality_status'] == VALID else 0.0)
-                    if after <= -c['daily_loss_r']:
+                    if c['daily_loss_r'] and after <= -c['daily_loss_r']:
                         st['halted_day'] = day                   # this loss reaches the daily limit: no reversal
                     blocked = self._why_blocked(st, t, spread)
                     if blocked is None and len(st['entries']) >= st['max_flips']:
@@ -217,7 +257,7 @@ class TrailFlip:
                     if (cand - level if buy else level - cand) >= st['step']:
                         pos['stop'] = round(cand, digits)
                 # daily loss limit counts the open trade too
-                if pos['data_quality_status'] == VALID and st.get('day_r', 0.0) + r <= -c['daily_loss_r']:
+                if c['daily_loss_r'] and pos['data_quality_status'] == VALID and st.get('day_r', 0.0) + r <= -c['daily_loss_r']:
                     closed.append(self._close(st, pos, round(basis - slip if buy else basis + slip, digits),
                                               t, spread, 'DAILY_LIMIT', False))
                     pos, st['halted_day'] = None, day
