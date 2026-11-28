@@ -25,23 +25,30 @@ function renderQuant() {
   : `Last run ${date(r.last_run_epoch, true)} · history ${qaDay(r.window_start)} to ${qaDay(r.window_end)} · ${r.rows.length} agents. `
     + 'Fills come from M1 candles, not ticks, so quick wicks can trigger stops the live 15 s poll misses. '
     + 'Use Run a backtest above to test a strategy again (MT5 must be open).';
- const order = Object.keys(QA_VERDICT);
- setHTML('qa-verdicts', r.verdicts ? order.filter(v => r.verdicts[v]).map(v =>
-  `<div class="health-card"><div>${chip(QA_VERDICT[v][0], QA_VERDICT[v][1])}</div><p class="small" style="margin:6px 0 0"><b>${r.verdicts[v]}</b> agents</p></div>`).join('') : '');
+ // Period: each agent keeps its newest result per history length (7/30/90... days). "Latest run" =
+ // each agent's newest result of any length (what the Signal Agent grades with).
+ const pSel = $('qa-filter-period'), keepP = pSel.value, periods = r.periods || [];
+ pSel.innerHTML = '<option value="LATEST">Latest run per agent</option>' + periods.map(d => `<option value="${d}">${d} days</option>`).join('');
+ pSel.value = keepP === 'LATEST' || periods.includes(+keepP) ? keepP : 'LATEST';
+ const inPeriod = (r.rows || []).filter(x => pSel.value === 'LATEST' ? x.latest !== false : x.days === +pSel.value);
+ const order = Object.keys(QA_VERDICT), counts = {};
+ for (const x of inPeriod) counts[x.backtest.verdict] = (counts[x.backtest.verdict] || 0) + 1;
+ setHTML('qa-verdicts', order.filter(v => counts[v]).map(v =>
+  `<div class="health-card"><div>${chip(QA_VERDICT[v][0], QA_VERDICT[v][1])}</div><p class="small" style="margin:6px 0 0"><b>${counts[v]}</b> agents</p></div>`).join(''));
  const sSel = $('qa-filter-strategy'), keep = sSel.value;
- const strategies = [...new Set((r.rows || []).map(x => x.strategy_id))].sort();
+ const strategies = [...new Set(inPeriod.map(x => x.strategy_id))].sort();
  sSel.innerHTML = '<option value="ALL">All</option>' + strategies.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
  sSel.value = strategies.includes(keep) ? keep : 'ALL';
  const wantV = $('qa-filter-verdict').value, wantS = sSel.value, current = $('qa-filter-status').value === 'CURRENT';
  // Variant = the agent's label (setup / mode / filter), listed for the chosen strategy.
  const vSel = $('qa-filter-variant'), keepV = vSel.value;
- const variants = [...new Set((r.rows || []).filter(x => (wantS === 'ALL' || x.strategy_id === wantS)
+ const variants = [...new Set(inPeriod.filter(x => (wantS === 'ALL' || x.strategy_id === wantS)
   && (!current || x.agent_status !== 'REMOVED')).map(x => x.label))].sort();
  vSel.innerHTML = '<option value="ALL">All' + (variants.length ? ` (${variants.length})` : '') + '</option>'
   + variants.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
  vSel.value = variants.includes(keepV) ? keepV : 'ALL';
  const wantL = vSel.value;
- const scoped = (r.rows || []).filter(x => (wantS === 'ALL' || x.strategy_id === wantS) && (wantL === 'ALL' || x.label === wantL)
+ const scoped = inPeriod.filter(x => (wantS === 'ALL' || x.strategy_id === wantS) && (wantL === 'ALL' || x.label === wantL)
   && (!current || x.agent_status !== 'REMOVED'));
  renderQuantVariants(scoped);
  const rows = scoped.filter(x => wantV === 'ALL' || x.backtest.verdict === wantV);
@@ -50,7 +57,7 @@ function renderQuant() {
   const oos = b.oos_trades ? `<span class="${qaCls(b.oos_net_r)}">${qaR(b.oos_net_r)}</span><small class="muted"> · ${b.oos_trades}</small>` : '—';
   const live = f ? `<span class="${qaCls(f.net_r)}">${qaR(f.net_r)}</span><small class="muted"> · ${f.trades} · ${qaPct(f.win_rate)}</small>` : '<span class="muted">no trades</span>';
   const st = x.agent_status === 'RUNNING' ? chip('Running', 'good') : x.agent_status === 'REMOVED' ? chip('Removed', 'bad') : chip(x.agent_status[0] + x.agent_status.slice(1).toLowerCase(), '');
-  return `<tr><td>${esc(x.label)}</td><td><b>${esc(x.symbol)}</b></td><td>${chip(v[0], v[1])}</td><td>${b.trades ?? '—'}</td>`
+  return `<tr><td>${esc(x.label)}${x.days ? `<small class="muted" style="display:block">${x.days}-day backtest</small>` : ''}</td><td><b>${esc(x.symbol)}</b></td><td>${chip(v[0], v[1])}</td><td>${b.trades ?? '—'}</td>`
    + `<td>${qaPct(b.win_rate)}</td><td class="${qaCls(b.net_r)}"><b>${qaR(b.net_r)}</b></td><td class="${qaCls(b.avg_r)}">${qaR(b.avg_r)}</td>`
    + `<td>${b.profit_factor == null ? '—' : Number(b.profit_factor).toFixed(2)}</td><td class="sell">${qaR(b.max_dd_r)}</td>`
    + `<td class="${qaCls(b.net_r_without_best)}">${qaR(b.net_r_without_best)}</td><td>${oos}</td><td>${live}</td><td>${st}</td></tr>`;
@@ -76,7 +83,7 @@ function renderQuantVariants(rows) {
    + `<td>${g.lt ? `<span class="${qaCls(g.ltNet)}">${qaR(g.ltNet)}</span><small class="muted"> · ${g.lt} trades</small>` : '<span class="muted">no trades</span>'}</td></tr>`;
  }).join(''));
 }
-for (const id of ['qa-filter-verdict', 'qa-filter-variant', 'qa-filter-status']) $(id).addEventListener('change', renderQuant);
+for (const id of ['qa-filter-period', 'qa-filter-verdict', 'qa-filter-variant', 'qa-filter-status']) $(id).addEventListener('change', renderQuant);
 $('qa-filter-strategy').addEventListener('change', () => { $('qa-filter-variant').value = 'ALL'; renderQuant(); });
 
 // ---- Run a backtest from the dashboard (a separate quant_agent.py process; one run at a time) ----
@@ -167,6 +174,8 @@ function renderQuantRun() {
  if (qaRunWas === 'RUNNING' && !running && j.state === 'DONE') {     // just finished: show the new results for that strategy
   refreshQuant().then(() => {
    const f = $('qa-filter-strategy');
+   const p = $('qa-filter-period');
+   if ([...p.options].some(o => o.value === String(j.days))) { p.value = String(j.days); renderQuant(); }
    if (![...f.options].some(o => o.value === j.strategy)) return;
    f.value = j.strategy; $('qa-filter-variant').value = 'ALL'; renderQuant();
    const v = $('qa-filter-variant');

@@ -49,7 +49,10 @@ Why the wave 5 stop is below wave 4 and not below wave 1's high: with the entry 
 - **Stop size** at least the larger of **0.5 × H1 ATR** and **3 × the current spread**, at most
   **8 × H1 ATR** (`RISK_OUT_OF_BOUNDS`).
 - **One decision per wave count**: the same wave 1 is never traded twice.
-- **Time exit after 48 hours**; the usual Live Test weekend, market-closed and data-gap rules apply.
+- **No time exit**: a trade ends only at its stop or its target (the first version closed trades
+  after 48 hours; in the 90-day backtest 57 % of wave 3 trades ended that way before reaching the
+  target). `time_exit_hours` in the config sets one again. The usual Live Test market-closed and
+  data-gap rules apply.
 - The **market regime at entry** (Market Scout's label) is recorded on every trade for the Grade
   check. Optional filter (`regime_filter`) skips Crisis and Mean reverting (`REGIME_FILTERED`).
 

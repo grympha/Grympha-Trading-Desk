@@ -1,4 +1,5 @@
 """Quant Agent: no-lookahead replay, identical results to the Live Test engine, statistics."""
+import json
 import math
 import tempfile
 import unittest
@@ -179,6 +180,38 @@ class DashboardView(unittest.TestCase):
         self.assertEqual((gone['agent_status'], gone['forward']), ('REMOVED', None))
         self.assertEqual(v['verdicts'], {'EDGE (keep testing live)': 1, 'LOSING (switch off)': 1})
         self.assertEqual((v['window_start'], v['last_run_epoch']), (T0 - 5, T0 + 100))
+
+    def test_each_history_length_is_kept_for_the_period_filter(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        store = Store(Path(tmp.name) / 'db.sqlite3')
+        LiveTestEngine(store)
+        stats = lambda rs: qa.summarise([dict(entry_time=T0 + i, pnl_r=r, data_quality_status=VALID) for i, r in enumerate(rs)])
+        win, lose = stats([1.0, -1.0, 1.0] * 15), stats([-1.0] * 40)
+        row = lambda st, days, start: dict(strategy_id='TEST_AGENT', symbol='EURUSD', config_id='a', start=start,
+                                           end=T0, stats=st, verdict=qa.verdict(st), days=days)
+        qa.save_results(store, [row(win, 90, T0 - 90 * 86400)], now=T0 + 1)
+        qa.save_results(store, [row(lose, 30, T0 - 30 * 86400)], now=T0 + 2)        # a 30-day run later
+        v = qa.report_view(store)
+        by_days = {r['days']: r for r in v['rows']}
+        self.assertEqual(v['periods'], [30, 90])
+        self.assertEqual((by_days[90]['backtest']['net_r'], by_days[30]['backtest']['net_r']), (win['net_r'], lose['net_r']))
+        self.assertEqual((by_days[30]['latest'], by_days[90]['latest']), (True, False))   # newest = what grades use
+        self.assertEqual(qa.load_results(store)['TEST_AGENT|EURUSD|a']['net_r'], lose['net_r'])
+        qa.save_results(store, [row(win, 30, T0 - 30 * 86400)], now=T0 + 3)         # a new 30-day run replaces it
+        self.assertEqual(len(qa.report_view(store)['rows']), 2)
+
+    def test_results_saved_before_periods_existed_are_filed_by_length(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        store = Store(Path(tmp.name) / 'db.sqlite3')
+        LiveTestEngine(store)
+        st = qa.summarise([dict(entry_time=T0, pnl_r=1.0, data_quality_status=VALID)])
+        with store.connect() as db:
+            db.execute(qa.RESULTS_SCHEMA)
+            db.execute('INSERT INTO quant_results VALUES (?,?,?,?,?,?,?,?,?,?)',
+                       ('TEST_AGENT|EURUSD|a', 'TEST_AGENT', 'EURUSD', 'a', '', T0 - 14 * 86400 + 600, T0, T0, 'TOO FEW TRADES',
+                        json.dumps(qa.compact(st))))
+        [r] = qa.report_view(store)['rows']
+        self.assertEqual((r['days'], r['latest']), (14, True))
 
 
 if __name__ == '__main__':

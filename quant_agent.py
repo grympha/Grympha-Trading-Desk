@@ -389,15 +389,49 @@ def compact(stats):
     return out
 
 
+# Every agent's newest result PER HISTORY LENGTH (7/30/90... days), for the dashboard's Period filter.
+# quant_results above stays "newest of any length" (what the Signal Agent grades with).
+HISTORY_SCHEMA = '''CREATE TABLE IF NOT EXISTS quant_history(
+ agent_id TEXT, days INTEGER, strategy_id TEXT, symbol TEXT, config_id TEXT, setup TEXT,
+ start REAL, end REAL, created REAL, verdict TEXT, stats TEXT, PRIMARY KEY (agent_id, days))'''
+
+
+STANDARD_DAYS = (7, 14, 30, 60, 90, 180)
+
+
+def _days(r):
+    """History length of a result in whole days: the requested --days when known; otherwise end - start,
+    snapped to the nearest standard length within 10 % (history can start a little after the request)."""
+    if r.get('days'):
+        return max(1, int(round(float(r['days']))))
+    d = (r['end'] - r['start']) / DAY_SECONDS
+    near = min(STANDARD_DAYS, key=lambda s: abs(s - d))
+    return near if abs(near - d) <= 0.1 * near else max(1, int(round(d)))
+
+
+def _backfill_history(db):
+    """Results saved before quant_history existed: file them under their (snapped) length."""
+    db.execute(HISTORY_SCHEMA)
+    have = {r[0] for r in db.execute('SELECT DISTINCT agent_id FROM quant_history')}
+    for r in db.execute('SELECT * FROM quant_results').fetchall():
+        if r['agent_id'] not in have:
+            db.execute('INSERT OR IGNORE INTO quant_history VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                       (r['agent_id'], _days(dict(start=r['start'], end=r['end'])), r['strategy_id'], r['symbol'],
+                        r['config_id'], r['setup'], r['start'], r['end'], r['created'], r['verdict'], r['stats']))
+
+
 def save_results(store, results, now=None):
     now = time.time() if now is None else now
     with store.connect() as db:
         db.execute(RESULTS_SCHEMA)
+        _backfill_history(db)
         for r in results:
-            db.execute('INSERT OR REPLACE INTO quant_results VALUES (?,?,?,?,?,?,?,?,?,?)',
-                       (f"{r['strategy_id']}|{r['symbol']}|{r['config_id']}", r['strategy_id'], r['symbol'],
-                        r['config_id'], r.get('setup') or '', r['start'], r['end'], now, r['verdict'],
-                        json.dumps(compact(r['stats']), allow_nan=False)))
+            row = (f"{r['strategy_id']}|{r['symbol']}|{r['config_id']}", r['strategy_id'], r['symbol'],
+                   r['config_id'], r.get('setup') or '', r['start'], r['end'], now, r['verdict'],
+                   json.dumps(compact(r['stats']), allow_nan=False))
+            db.execute('INSERT OR REPLACE INTO quant_results VALUES (?,?,?,?,?,?,?,?,?,?)', row)
+            db.execute('INSERT OR REPLACE INTO quant_history VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                       (row[0], _days(r)) + row[1:])
 
 
 def load_results(store):
@@ -410,38 +444,49 @@ def load_results(store):
 
 
 def report_view(store):
-    """Dashboard view: every saved backtest beside the same agent's Live Test record and status."""
+    """Dashboard view: every saved backtest (one per agent and history length) beside the same agent's
+    Live Test record and status. `latest` marks each agent's newest result of any length."""
     results = load_results(store)
     if not results:
         return dict(status='WAITING', rows=[], note='No Quant Agent backtest yet. Run it from the project folder, '
                     'e.g. "python quant_agent.py --live --days 30" (needs MT5 open; takes a few minutes).')
     with store.connect() as db:
+        _backfill_history(db)
+        history = db.execute('SELECT * FROM quant_history').fetchall()
         agents = {r['id']: r for r in db.execute('SELECT id, strategy_id, config, status FROM live_test_agents')}
         trades = defaultdict(list)
         for r in db.execute('SELECT agent_id, payload FROM live_test_trades'):
             if r['agent_id'] in results:
                 trades[r['agent_id']].append(json.loads(r['payload']))
+    labels, forward = {}, {}
     rows = []
-    for aid, b in results.items():
+    for h in history:
+        aid = h['agent_id']
         strategy_id, symbol = aid.split('|')[:2]
         a = agents.get(aid)
-        label = strategy_id
-        if a is not None:
-            try:
-                label = build_agent(a['strategy_id'], json.loads(a['config'])).label()
-            except Exception:
-                pass
-        fwd = summarise(trades.get(aid, [])) if trades.get(aid) else None
-        rows.append(dict(agent_id=aid, strategy_id=strategy_id, symbol=symbol, label=label,
-                         agent_status=a['status'] if a is not None else 'REMOVED', backtest=b,
-                         forward=None if fwd is None else dict(trades=fwd['trades'], win_rate=fwd['win_rate'],
-                                                               net_r=fwd['net_r'], avg_r=fwd['avg_r'])))
+        if aid not in labels:
+            labels[aid] = strategy_id
+            if a is not None:
+                try:
+                    labels[aid] = build_agent(a['strategy_id'], json.loads(a['config'])).label()
+                except Exception:
+                    pass
+            fwd = summarise(trades[aid]) if trades.get(aid) else None
+            forward[aid] = None if fwd is None else dict(trades=fwd['trades'], win_rate=fwd['win_rate'],
+                                                         net_r=fwd['net_r'], avg_r=fwd['avg_r'])
+        b = dict(json.loads(h['stats']), verdict=h['verdict'], start=h['start'], end=h['end'], created=h['created'])
+        newest = results.get(aid)
+        rows.append(dict(agent_id=aid, strategy_id=strategy_id, symbol=symbol, label=labels[aid], days=h['days'],
+                         latest=bool(newest and abs(newest['created'] - h['created']) < 1e-6
+                                     and abs(newest['start'] - h['start']) < 1e-6),
+                         agent_status=a['status'] if a is not None else 'REMOVED', backtest=b, forward=forward[aid]))
     rows.sort(key=lambda r: (-(r['backtest'].get('net_r') or 0), r['symbol']))
     created = [b['created'] for b in results.values()]
     counts = defaultdict(int)
     for b in results.values():
         counts[b['verdict']] += 1
     return dict(status='OK', rows=rows, verdicts=dict(counts), last_run_epoch=max(created),
+                periods=sorted({r['days'] for r in rows}),
                 window_start=min(b['start'] for b in results.values()), window_end=max(b['end'] for b in results.values()))
 
 
@@ -555,6 +600,8 @@ def main(argv=None):
         results = run(jobs, start, end, cfg, mt5, a.extra_spread_points, log=lambda m: print(m, flush=True))
     finally:
         mt5.shutdown()
+    for r in results:
+        r['days'] = a.days                     # the requested history length (for the Period filter)
     paths = write_reports(results, ROOT / 'reports', start, end, a.extra_spread_points)
     if not a.extra_spread_points:          # stress tests are reports only; they never replace the grades
         save_results(store, results)

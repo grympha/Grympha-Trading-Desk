@@ -1354,6 +1354,12 @@ def build_agent(strategy_id, config):
             return LiveBBMA(config)
         except Exception:
             return None
+    if strategy_id == 'CONFLUENCE_SCORE':
+        try:
+            from live_test_confluence import ConfluenceScore
+            return ConfluenceScore(config)
+        except Exception:
+            return None
     if strategy_id == 'LIVE_CONFLUENCE':
         try:
             from live_test_confluence import LiveConfluence
@@ -1424,6 +1430,43 @@ def elliott_agent_configs(cfg, base):
     return [{'mode': m, 'regime_filter': bool(f), **ov} for m in modes for f in filters]
 
 
+def confluence_score_agents(cfg):
+    """Live-Test-only Confluence agents at fixed minimum scores (`confluence_test.scores`, default 3 and 5)."""
+    from live_test_confluence import ConfluenceScore
+    scores = ((cfg or {}).get('confluence_test') or {}).get('scores') or [3, 5]
+    return [ConfluenceScore.for_score(cfg or {}, s) for s in scores if s in (1, 2, 3, 4, 5)]
+
+
+def replace_versions(engine, strategy_id, wanted, follow=None):
+    """Register `wanted` [(agent, base)] for one strategy and retire its other versions (REMOVED: never run
+    again, their trades stay in the history). A new version starts RUNNING when the pair had a running
+    version of that strategy before, so changing a default setting does not leave the pair paused or
+    running two versions side by side. Versions with an open simulated position are kept until it closes.
+    follow: a strategy_id whose running pairs also start brand-new agents RUNNING (e.g. the comparison
+    agents follow the live Confluence agent of the same pair)."""
+    ids = {f'{a.strategy_id}|{b}|{a.config_id}' for a, b in wanted if a is not None}
+    with engine.store.connect() as db:
+        old = db.execute("SELECT id, symbol, status FROM live_test_agents WHERE strategy_id=? AND status!='REMOVED'",
+                         (strategy_id,)).fetchall()
+        busy = {r['agent_id'] for r in db.execute('SELECT DISTINCT agent_id FROM live_test_positions')}
+    stale = [r for r in old if r['id'] not in ids and r['id'] not in busy]
+    running_pairs = {r['symbol'] for r in old if r['id'] not in ids and r['status'] == 'RUNNING'}
+    if follow:
+        running_pairs |= {la.base_symbol for la in engine.agents.values()
+                          if la.agent.strategy_id == follow and la.status == 'RUNNING'}
+    if stale:
+        with engine.store.connect() as db:
+            db.executemany("UPDATE live_test_agents SET status='REMOVED' WHERE id=?", [(r['id'],) for r in stale])
+        for r in stale:
+            engine.agents.pop(r['id'], None)
+    for agent, base in wanted:
+        if agent is None:
+            continue
+        aid = f'{agent.strategy_id}|{base}|{agent.config_id}'
+        if aid not in engine.agents:
+            engine.register(agent, base, 'RUNNING' if base in running_pairs else 'PAUSED')
+
+
 def ensure_default_agents(engine, cfg=None):
     """Register the starting agents (paused) if not already present. The core agents run on
     every configured pair. The H4 Liquidity Sweep + FVG agent runs on every pair too, at the
@@ -1441,6 +1484,7 @@ def ensure_default_agents(engine, cfg=None):
 
     # The all-symbol Live Test agents (one baseline config each; per-symbol overrides via
     # cfg[<key>].symbol_overrides). H4 Liquidity Sweep adds its optional timeframes.
+    ew_wanted, cs_wanted = [], []
     ALL_SYMBOL_AGENTS = ('CRT_H1_M5', 'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST')
     _key = {'CRT_H1_M5': 'crt', 'H4_SWING_SWEEP_FVG_ENGULF': 'h4_swing',
             'NY_SWEEP_LONDON': 'ny_london', 'INVERSE_FVG_RETEST': 'inverse_fvg'}
@@ -1456,8 +1500,11 @@ def ensure_default_agents(engine, cfg=None):
         for snr in snr_agent_configs(cfg, base):
             _reg(build_agent('SNR_ZONES', snr), base)
         # Elliott Wave impulse entries: wave 3 and wave 5 (regime filter variants optional).
-        for ew in elliott_agent_configs(cfg, base):
-            _reg(build_agent('EW_IMPULSE', ew), base)
+        ew_wanted += [(build_agent('EW_IMPULSE', ew), base) for ew in elliott_agent_configs(cfg, base)]
+        # Confluence minimum-score comparison (Live Test only; never the live settings).
+        cs_wanted += [(a, base) for a in confluence_score_agents(cfg)]
+    replace_versions(engine, 'EW_IMPULSE', ew_wanted)
+    replace_versions(engine, 'CONFLUENCE_SCORE', cs_wanted, follow='LIVE_CONFLUENCE')
     # Gold ORB 09:30 NY is XAUUSD-only (SELL baseline).
     _reg(build_agent('ORB_BREAKOUT_RETEST', cfg.get('orb') or {}), 'XAUUSD')
     # Ported XAUUSD paper desks (gold-tuned ATR/sizing), XAUUSD-only like ORB.

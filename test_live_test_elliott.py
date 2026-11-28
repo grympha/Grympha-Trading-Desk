@@ -126,6 +126,34 @@ class Wave3(unittest.TestCase):
         self.assertEqual((sig, st['_emit'][-1]['reason']), (None, 'REGIME_FILTERED'))
 
 
+    def test_no_time_exit_unless_configured(self):
+        bars = h1_bars(path([105, 90, 100, 95, 97]))
+        self.assertIsNone(run(agent(), bars)[0]['entry_candle_end'])               # stop or target only
+        sig = run(agent(time_exit_hours=24), bars)[0]
+        self.assertEqual(sig['entry_candle_end'], bars[-1].time + H1D + 10 + 24 * 3600)
+
+
+class Versions(unittest.TestCase):
+    def test_changing_a_default_replaces_the_running_version(self):
+        import tempfile
+        from pathlib import Path
+        from dashboard_store import Store
+        from live_test import LiveTestEngine, ensure_default_agents
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        eng = LiveTestEngine(Store(Path(tmp.name) / 'db.sqlite3'))
+        old = build_agent('EW_IMPULSE', {'mode': 'WAVE3', 'regime_filter': False, 'time_exit_hours': 48})
+        eng.register(old, 'XAUUSD', 'RUNNING')
+        ensure_default_agents(eng, {'symbols': ['XAUUSD']})
+        ew = {la.id: la.status for la in eng.agents.values() if la.agent.strategy_id == 'EW_IMPULSE'}
+        self.assertNotIn(f'EW_IMPULSE|XAUUSD|{old.config_id}', ew)                 # retired
+        self.assertEqual(sorted(ew.values()), ['RUNNING', 'RUNNING'])               # new versions take over
+        with eng.store.connect() as db:
+            st = db.execute('SELECT status FROM live_test_agents WHERE id=?', (f'EW_IMPULSE|XAUUSD|{old.config_id}',)).fetchone()
+        self.assertEqual(st['status'], 'REMOVED')                                    # history kept, never runs again
+        ensure_default_agents(eng, {'symbols': ['XAUUSD']})                          # idempotent
+        self.assertEqual(len([1 for la in eng.agents.values() if la.agent.strategy_id == 'EW_IMPULSE']), 2)
+
+
 class Wave5(unittest.TestCase):
     def test_buy_after_wave_4(self):
         sig, st = run(agent(mode='WAVE5'), h1_bars(path([105, 90, 100, 95, 112, 106, 108])))

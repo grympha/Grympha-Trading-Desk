@@ -17,7 +17,8 @@ taken when that leg turns back by `confirm_atr` x ATR (a bullish/bearish H1 clos
         within [w4_min, w4_max]. SL below P4 - buffer; TP = P4 + w5_target x wave 1.
 
 Shared: minimum reward `min_rr`; stop between max(`min_sl_atr` x ATR, `min_sl_spreads` x spread) and
-`max_sl_atr` x ATR; one trade per wave count; time exit `time_exit_hours`; the market regime at entry
+`max_sl_atr` x ATR; one trade per wave count; no time exit by default (`time_exit_hours` sets one:
+the trade then ends at its stop, its target or that time); the market regime at entry
 is recorded (optional `regime_filter` skips CRISIS and MEAN_REVERTING). Every rejected count is
 logged with the rule it failed.
 
@@ -151,7 +152,8 @@ class ElliottImpulse:
         w4_min=0.236, w4_max=0.5, w5_target=1.0,
         sl_buffer_points=None, sl_buffer_atr=0.10,
         min_sl_atr=0.5, max_sl_atr=8.0, min_sl_points=None, max_sl_points=None, min_sl_spreads=3.0,
-        min_rr=1.5, entry_window_seconds=300, time_exit_hours=48, max_gap_seconds=120, max_positions=1)
+        min_rr=1.5, entry_window_seconds=300, time_exit_hours=None,   # None: no time exit (stop or target only)
+        max_gap_seconds=120, max_positions=1)
 
     def __init__(self, config: dict | None = None):
         self.config = {**self.DEFAULTS, **(config or {})}
@@ -259,5 +261,6 @@ class ElliottImpulse:
                                              f"(depth {count.get('w2_depth', count.get('w4_depth'))})",
                     signal_time=last.time + H1_DUR, trigger_price=(quote.bid + quote.ask) / 2.0,
                     initial_sl=round(sl, quote.digits), initial_tp=round(tp, quote.digits), session=None,
-                    timeframe=self.timeframe, entry_candle_end=float(now + c['time_exit_hours'] * 3600),
+                    timeframe=self.timeframe,
+                    entry_candle_end=None if not c['time_exit_hours'] else float(now + c['time_exit_hours'] * 3600),
                     config_snapshot=dict(self.config), extra=extra)

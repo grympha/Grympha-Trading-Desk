@@ -577,7 +577,7 @@ class CmsRegistration(unittest.TestCase):
                     not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG', 'CRT_H1_M5',
                             'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST',
                             'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3',
-                            'LIVE_BBMA', 'LIVE_CONFLUENCE', 'LIVE_ORB', 'TRAILFLIP', 'SNR_ZONES', 'EW_IMPULSE')}
+                            'LIVE_BBMA', 'LIVE_CONFLUENCE', 'LIVE_ORB', 'TRAILFLIP', 'SNR_ZONES', 'EW_IMPULSE', 'CONFLUENCE_SCORE')}
             self.assertEqual(len(core), 6)
             per_pair = {la.agent.strategy_id for la in eng.agents.values()
                         if la.base_symbol == base}

@@ -62,6 +62,7 @@ class LiveConfluence:
     def label(self):
         return f"Confluence live · score {self.config['min_score']}/5+"
 
+
     def _emit(self, state, event, **kw):
         state.setdefault('_emit', []).append(dict(event=event, **kw))
 
@@ -101,3 +102,20 @@ class LiveConfluence:
                     signal_time=now, trigger_price=plan['entry'], initial_sl=sl, initial_tp=tp2,
                     session=f'{day}@confluence', timeframe=self.timeframe, entry_candle_end=None,
                     config_snapshot=dict(c), extra=extra)
+
+
+class ConfluenceScore(LiveConfluence):
+    """Live-Test-ONLY comparison of the minimum score: the same live Confluence analysis and trade
+    management as `LiveConfluence`, but at a FIXED minimum score (3/5 or 5/5 by default) on every Live
+    Test pair, whatever the live dashboard uses. Analysis values come from config.json only, so a live
+    settings change never touches these agents. They are never part of live trading."""
+    strategy_id = 'CONFLUENCE_SCORE'
+    version = 'confluence_score@1'
+
+    @classmethod
+    def for_score(cls, cfg: dict, score: int) -> 'ConfluenceScore':
+        base = LiveConfluence.from_live_config(cfg)
+        return cls(dict(base.config, min_score=int(score)))
+
+    def label(self):
+        return f"Confluence test · score {self.config['min_score']}/5+"
