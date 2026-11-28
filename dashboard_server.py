@@ -125,7 +125,9 @@ def build_server(store, port=8765, remote=()):
                         elif body.get('action')=='start':
                             days=body.get('days')
                             if not isinstance(days,int) or isinstance(days,bool):raise ValueError('Invalid days')
-                            job=quant_runner.start(store,str(body.get('strategy') or ''),str(body.get('symbol') or 'ALL'),days)
+                            variant=body.get('variant')
+                            if variant is not None and (not isinstance(variant,str) or len(variant)>160):raise ValueError('Invalid variant')
+                            job=quant_runner.start(store,str(body.get('strategy') or ''),str(body.get('symbol') or 'ALL'),days,variant=variant)
                         else:raise ValueError('Unknown action')
                     except RuntimeError as exc:return self.send(str(exc).encode(),'text/plain',409)
                     return self.send(json.dumps({'ok':True,'job':job}).encode(),'application/json')

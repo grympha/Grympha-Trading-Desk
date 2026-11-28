@@ -33,8 +33,18 @@ function renderQuant() {
  sSel.innerHTML = '<option value="ALL">All</option>' + strategies.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
  sSel.value = strategies.includes(keep) ? keep : 'ALL';
  const wantV = $('qa-filter-verdict').value, wantS = sSel.value, current = $('qa-filter-status').value === 'CURRENT';
- const rows = (r.rows || []).filter(x => (wantV === 'ALL' || x.backtest.verdict === wantV)
-  && (wantS === 'ALL' || x.strategy_id === wantS) && (!current || x.agent_status !== 'REMOVED'));
+ // Variant = the agent's label (setup / mode / filter), listed for the chosen strategy.
+ const vSel = $('qa-filter-variant'), keepV = vSel.value;
+ const variants = [...new Set((r.rows || []).filter(x => (wantS === 'ALL' || x.strategy_id === wantS)
+  && (!current || x.agent_status !== 'REMOVED')).map(x => x.label))].sort();
+ vSel.innerHTML = '<option value="ALL">All' + (variants.length ? ` (${variants.length})` : '') + '</option>'
+  + variants.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+ vSel.value = variants.includes(keepV) ? keepV : 'ALL';
+ const wantL = vSel.value;
+ const scoped = (r.rows || []).filter(x => (wantS === 'ALL' || x.strategy_id === wantS) && (wantL === 'ALL' || x.label === wantL)
+  && (!current || x.agent_status !== 'REMOVED'));
+ renderQuantVariants(scoped);
+ const rows = scoped.filter(x => wantV === 'ALL' || x.backtest.verdict === wantV);
  paginate('qa-rows', 'qa-rows-pager', rows, x => {
   const b = x.backtest, f = x.forward, v = QA_VERDICT[b.verdict] || [b.verdict, ''];
   const oos = b.oos_trades ? `<span class="${qaCls(b.oos_net_r)}">${qaR(b.oos_net_r)}</span><small class="muted"> · ${b.oos_trades}</small>` : '—';
@@ -46,7 +56,28 @@ function renderQuant() {
    + `<td class="${qaCls(b.net_r_without_best)}">${qaR(b.net_r_without_best)}</td><td>${oos}</td><td>${live}</td><td>${st}</td></tr>`;
  }, { pageSize: 20, colspan: 13, empty: 'No backtests match this filter.' });
 }
-for (const id of ['qa-filter-verdict', 'qa-filter-strategy', 'qa-filter-status']) $(id).addEventListener('change', renderQuant);
+// One line per variant: every pair's backtest of that variant added together (trade-weighted).
+function renderQuantVariants(rows) {
+ const by = new Map();
+ for (const x of rows) {
+  const b = x.backtest || {}, g = by.get(x.label) || { label: x.label, pairs: 0, trades: 0, wins: 0, net: 0, pos: 0, edge: 0, losing: 0, lt: 0, ltNet: 0 };
+  g.pairs++; g.trades += b.trades || 0; g.wins += (b.win_rate || 0) * (b.trades || 0); g.net += b.net_r || 0;
+  g.pos += (b.net_r || 0) > 0; g.edge += b.verdict === 'EDGE (keep testing live)'; g.losing += b.verdict === 'LOSING (switch off)';
+  if (x.forward) { g.lt += x.forward.trades || 0; g.ltNet += x.forward.net_r || 0; }
+  by.set(x.label, g);
+ }
+ const list = [...by.values()].sort((a, b) => b.net - a.net);
+ $('qa-variants-wrap').hidden = !list.length;
+ setHTML('qa-variants', list.map(g => {
+  const avg = g.trades ? g.net / g.trades : null;
+  return `<tr><td><b>${esc(g.label)}</b></td><td>${g.pairs}</td><td>${g.trades}</td><td>${g.trades ? Math.round(100 * g.wins / g.trades) + '%' : '—'}</td>`
+   + `<td class="${qaCls(g.net)}"><b>${qaR(g.net)}</b></td><td class="${qaCls(avg)}">${qaR(avg)}</td><td>${g.pos} / ${g.pairs}</td>`
+   + `<td>${g.edge ? chip(g.edge + ' edge', 'good') : ''} ${g.losing ? chip(g.losing + ' losing', 'bad') : ''}${!g.edge && !g.losing ? '<span class="muted">—</span>' : ''}</td>`
+   + `<td>${g.lt ? `<span class="${qaCls(g.ltNet)}">${qaR(g.ltNet)}</span><small class="muted"> · ${g.lt} trades</small>` : '<span class="muted">no trades</span>'}</td></tr>`;
+ }).join(''));
+}
+for (const id of ['qa-filter-verdict', 'qa-filter-variant', 'qa-filter-status']) $(id).addEventListener('change', renderQuant);
+$('qa-filter-strategy').addEventListener('change', () => { $('qa-filter-variant').value = 'ALL'; renderQuant(); });
 
 // ---- Run a backtest from the dashboard (a separate quant_agent.py process; one run at a time) ----
 let qaRun = null, qaRunTimer = null, qaRunWas = null;
@@ -68,17 +99,36 @@ function qaFillOptions() {
  }
  const dSel = $('qa-run-days');
  if (!dSel.options.length) { dSel.innerHTML = (qaRun.days || []).map(d => `<option value="${d}">${d} days</option>`).join(''); dSel.value = '30'; }
+ qaFillVariants();
+}
+const qaOpt = () => ((qaRun && qaRun.options) || []).find(x => x.id === $('qa-run-strategy').value);
+// The chosen variant (or the whole strategy when "All variants"): {agents, symbols}.
+function qaScope() {
+ const o = qaOpt(); if (!o) return null;
+ const v = (o.variants || []).find(x => x.label === $('qa-run-variant').value);
+ return v || o;
+}
+function qaFillVariants() {
+ const o = qaOpt(), vSel = $('qa-run-variant'), keep = vSel.value, list = (o && o.variants) || [];
+ const sig = (o ? o.id : '') + '|' + list.map(v => v.label + v.agents).join('|');
+ if (vSel.dataset.sig !== sig) {
+  vSel.dataset.sig = sig;
+  vSel.innerHTML = `<option value="ALL">All ${list.length} variants</option>`
+   + list.map(v => `<option value="${esc(v.label)}">${esc(v.label)} · ${v.agents} agent${v.agents === 1 ? '' : 's'}</option>`).join('');
+  vSel.value = list.some(v => v.label === keep) ? keep : 'ALL';
+ }
+ $('qa-run-variant-wrap').hidden = list.length < 2;
  qaFillSymbols();
 }
 function qaFillSymbols() {
- const o = ((qaRun && qaRun.options) || []).find(x => x.id === $('qa-run-strategy').value), ySel = $('qa-run-symbol'), keep = ySel.value;
+ const o = qaScope(), ySel = $('qa-run-symbol'), keep = ySel.value;
  if (!o) { ySel.innerHTML = ''; return; }
  ySel.innerHTML = (o.symbols.length > 1 ? `<option value="ALL">All ${o.symbols.length} pairs</option>` : '') + o.symbols.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
  if ([...ySel.options].some(x => x.value === keep)) ySel.value = keep;
  qaHint();
 }
 function qaHint() {
- const o = ((qaRun && qaRun.options) || []).find(x => x.id === $('qa-run-strategy').value); if (!o) return;
+ const o = qaScope(); if (!o) return;
  const all = $('qa-run-symbol').value === 'ALL', pairs = all ? o.symbols.length : 1, runs = all ? o.agents : Math.max(1, Math.round(o.agents / o.symbols.length));
  const days = +$('qa-run-days').value || 30, mins = Math.max(1, Math.round(pairs * days / 30));
  $('qa-run-hint').textContent = `${runs} agent run${runs === 1 ? '' : 's'} on ${pairs} pair${pairs === 1 ? '' : 's'} · roughly ${mins}–${mins * 3} min.`;
@@ -89,11 +139,11 @@ function renderQuantRun() {
  const j = qaRun.job, box = $('qa-run-status'), running = !!j && j.state === 'RUNNING';
  $('qa-run-go').disabled = running || !(qaRun.options || []).length;
  $('qa-run-stop').hidden = !running;
- for (const id of ['qa-run-strategy', 'qa-run-symbol', 'qa-run-days']) $(id).disabled = running;
+ for (const id of ['qa-run-strategy', 'qa-run-variant', 'qa-run-symbol', 'qa-run-days']) $(id).disabled = running;
  if (!(qaRun.options || []).length) $('qa-run-hint').textContent = 'No Live Test agents registered yet.';
  clearTimeout(qaRunTimer);
  if (!j) { box.hidden = true; return; }
- const what = `<b>${esc(j.name || j.strategy)}</b> · ${j.symbol === 'ALL' ? 'all pairs' : esc(j.symbol)} · ${j.days} days`;
+ const what = `<b>${esc(j.variant || j.name || j.strategy)}</b> · ${j.symbol === 'ALL' ? 'all pairs' : esc(j.symbol)} · ${j.days} days`;
  const pct = j.progress_total ? Math.round(j.progress_done / j.progress_total * 100) : null;
  const prog = j.progress_total ? `${j.progress_done} of ${j.progress_total} agent runs done` : 'loading MT5 history';
  const log = (j.log || []).length ? `<pre>${esc(j.log.join('\n'))}</pre>` : '';
@@ -115,7 +165,13 @@ function renderQuantRun() {
   box.className = 'qa-run-status'; box.innerHTML = `The bot restarted while ${what} was running, so its progress can't be followed. If it finished, its results are in the table below.`;
  }
  if (qaRunWas === 'RUNNING' && !running && j.state === 'DONE') {     // just finished: show the new results for that strategy
-  refreshQuant().then(() => { const f = $('qa-filter-strategy'); if ([...f.options].some(o => o.value === j.strategy)) { f.value = j.strategy; renderQuant(); } });
+  refreshQuant().then(() => {
+   const f = $('qa-filter-strategy');
+   if (![...f.options].some(o => o.value === j.strategy)) return;
+   f.value = j.strategy; $('qa-filter-variant').value = 'ALL'; renderQuant();
+   const v = $('qa-filter-variant');
+   if (j.variant && [...v.options].some(o => o.value === j.variant)) { v.value = j.variant; renderQuant(); }
+  });
  }
  qaRunWas = j.state;
  if (running) qaRunTimer = setTimeout(refreshQuantRun, 3000);
@@ -124,12 +180,14 @@ async function qaPost(body) {
  const res = await fetch('api/quant-run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dashboard-Request': 'controls' }, body: JSON.stringify(body) });
  if (!res.ok) throw Error(res.status === 400 ? 'invalid choice' : (await res.text()) || 'HTTP ' + res.status);
 }
-$('qa-run-strategy').addEventListener('change', qaFillSymbols);
+$('qa-run-strategy').addEventListener('change', qaFillVariants);
+$('qa-run-variant').addEventListener('change', qaFillSymbols);
 $('qa-run-symbol').addEventListener('change', qaHint);
 $('qa-run-days').addEventListener('change', qaHint);
 $('qa-run-go').addEventListener('click', async () => {
  $('qa-run-go').disabled = true;
- try { await qaPost({ action: 'start', strategy: $('qa-run-strategy').value, symbol: $('qa-run-symbol').value || 'ALL', days: +$('qa-run-days').value }); qaRunWas = 'RUNNING'; }
+ const variant = $('qa-run-variant-wrap').hidden || $('qa-run-variant').value === 'ALL' ? null : $('qa-run-variant').value;
+ try { await qaPost({ action: 'start', strategy: $('qa-run-strategy').value, variant, symbol: $('qa-run-symbol').value || 'ALL', days: +$('qa-run-days').value }); qaRunWas = 'RUNNING'; }
  catch (e) { $('qa-run-hint').textContent = 'Could not start: ' + e.message; }
  refreshQuantRun();
 });

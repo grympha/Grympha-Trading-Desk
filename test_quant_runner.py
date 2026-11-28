@@ -100,6 +100,39 @@ class Runner(unittest.TestCase):
         self.kill()                                              # as if the bot (and dashboard) restarted
         self.assertEqual(qr.status(self.store)['state'], 'INTERRUPTED')
 
+    def add_snr(self):
+        rows = []
+        for mode, filt, sym in (('BOUNCE', False, 'XAUUSD'), ('BOUNCE', True, 'XAUUSD'), ('RETEST', False, 'XAUUSD'),
+                                ('RETEST', False, 'EURUSD')):
+            a = build_agent('SNR_ZONES', {'mode': mode, 'regime_filter': filt})
+            rows.append((f'SNR_ZONES|{sym}|{a.config_id}', 'SNR_ZONES', sym, a.config_id, json.dumps(a.config), 'PAUSED', '{}', 0))
+        with self.store.connect() as db:
+            db.executemany('INSERT INTO live_test_agents VALUES (?,?,?,?,?,?,?,?)', rows)
+
+    def test_options_split_a_strategy_into_variants(self):
+        self.add_snr()
+        snr = {o['id']: o for o in qr.options(self.store)}['SNR_ZONES']
+        self.assertEqual([(v['label'], v['agents'], v['symbols']) for v in snr['variants']], [
+            ('S&R Zones · Bounce', 1, ['XAUUSD']), ('S&R Zones · Bounce · regime filter', 1, ['XAUUSD']),
+            ('S&R Zones · Break & retest', 2, ['EURUSD', 'XAUUSD'])])
+        self.assertEqual(len({o['id']: o for o in qr.options(self.store)}['CMS_SSR']['variants']), 1)
+
+    def test_variant_run_targets_only_that_variant(self):
+        self.add_snr()
+        cmd = qr._command('SNR_ZONES', 'ALL', 30, 'S&R Zones · Break & retest')
+        self.assertEqual(cmd[-2:], ['--variant', 'S&R Zones · Break & retest'])
+        jobs = qa.registered_jobs(self.store, {'SNR_ZONES'}, variant='S&R Zones · Break & retest')
+        self.assertEqual(sorted((a.label(), s) for a, s in jobs),
+                         [('S&R Zones · Break & retest', 'EURUSD'), ('S&R Zones · Break & retest', 'XAUUSD')])
+        with self.assertRaises(ValueError):
+            qr.start(self.store, 'SNR_ZONES', 'ALL', 30, variant='S&R Zones · Nope')
+        with self.assertRaises(ValueError):                       # Bounce has no EURUSD agent
+            qr.start(self.store, 'SNR_ZONES', 'EURUSD', 30, variant='S&R Zones · Bounce')
+        with self.fake(FAKE_OK):
+            job = qr.start(self.store, 'SNR_ZONES', 'ALL', 30, variant='S&R Zones · Break & retest')
+        self.assertEqual(job['variant'], 'S&R Zones · Break & retest')
+        self.wait()
+
     def test_registered_jobs_rebuild_the_same_agent_ids(self):
         jobs = qa.registered_jobs(self.store, {'CMS_SSR'})
         self.assertEqual(sorted(s for _, s in jobs), ['EURUSD', 'GBPUSD'])

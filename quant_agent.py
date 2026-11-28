@@ -232,9 +232,10 @@ def load_history(mt5, symbol, start, end, timeframes, cfg):
 
 
 # --------------------------------------------------------------------------- runs
-def registered_jobs(store, strategies=None, symbols=None):
+def registered_jobs(store, strategies=None, symbols=None, variant=None):
     """[(agent, symbol)] for the agents registered in Live Test right now (not removed), rebuilt from
-    their saved config so each result lands on the same agent id the dashboard and Signal Agent use."""
+    their saved config so each result lands on the same agent id the dashboard and Signal Agent use.
+    variant: keep only agents with this label (one setup / mode / filter of a strategy)."""
     with store.connect() as db:
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         rows = db.execute('SELECT id, strategy_id, symbol, config, status FROM live_test_agents').fetchall()             if 'live_test_agents' in tables else []
@@ -246,7 +247,8 @@ def registered_jobs(store, strategies=None, symbols=None):
             agent = build_agent(r['strategy_id'], json.loads(r['config'] or '{}'))
         except Exception:
             agent = None
-        if agent is not None and f"{agent.strategy_id}|{r['symbol']}|{agent.config_id}" == r['id']:
+        if agent is not None and f"{agent.strategy_id}|{r['symbol']}|{agent.config_id}" == r['id'] \
+                and (variant is None or agent.label() == variant):
             jobs.append((agent, r['symbol']))
     return jobs
 
@@ -518,6 +520,7 @@ def main(argv=None):
     g.add_argument('--registered', action='store_true',
                    help='the agents registered in Live Test now (their saved settings); filter with --strategies/--symbols')
     p.add_argument('--strategies', help='comma-separated strategy_id filter for --registered')
+    p.add_argument('--variant', help='with --registered: only agents with this exact label, e.g. "S&R Zones · Bounce"')
     p.add_argument('--setup', help='BBMA setup: CSA_REENTRY, MOMENTUM_REENTRY or MHV_REVERSAL')
     p.add_argument('--symbol', default='XAUUSD')
     p.add_argument('--symbols', help='comma-separated filter for --live/--all')
@@ -532,7 +535,8 @@ def main(argv=None):
     from dashboard_store import Store
     store = Store(ROOT / 'dashboard.sqlite3')
     if a.registered:
-        jobs = registered_jobs(store, {s.strip() for s in a.strategies.split(',')} if a.strategies else None)
+        jobs = registered_jobs(store, {s.strip() for s in a.strategies.split(',')} if a.strategies else None,
+                               variant=a.variant)
     else:
         scope = 'live' if a.live else 'all' if a.all else 'one'
         jobs = jobs_for(scope, cfg, store, a.strategy, a.setup, a.symbol)
