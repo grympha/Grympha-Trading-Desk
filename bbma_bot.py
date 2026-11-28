@@ -363,9 +363,12 @@ def _run(args):
             store = Store(ROOT/'dashboard.sqlite3')
             store.start(cfg)
             if args.dashboard:
-                from dashboard_server import start_dashboard
-                dashboard = start_dashboard(store, args.dashboard_port)
+                from dashboard_server import start_dashboard, remote_hosts
+                remote = remote_hosts(cfg)
+                dashboard = start_dashboard(store, args.dashboard_port, remote)
                 print(f'Dashboard: http://127.0.0.1:{dashboard.server_port}', flush=True)
+                for h in remote:
+                    print(f'Dashboard (view only, via tailscale serve): https://{h}/home', flush=True)
         except Exception as exc:
             logging.warning('Dashboard unavailable: %s (analysis will continue)', exc)
     from news_filter import make_news_filter

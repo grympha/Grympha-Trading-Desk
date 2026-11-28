@@ -39,7 +39,19 @@ def light_snapshot(snap):
     return snap
 
 
-def build_server(store, port=8765):
+def remote_hosts(cfg):
+    """Tailscale names (<pc>.<tailnet>.ts.net) that may VIEW the dashboard through `tailscale serve`.
+    Only *.ts.net names are accepted; controls (POST) stay limited to this PC either way."""
+    out=[]
+    for h in (cfg or {}).get('dashboard_remote_hosts') or []:
+        h=str(h).strip().lower().rstrip('.')
+        if re.fullmatch(r'[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net',h):out.append(h)
+        else:print(f'Dashboard: ignoring dashboard_remote_hosts entry {h!r} (only Tailscale *.ts.net names are allowed)',flush=True)
+    return tuple(out)
+
+
+def build_server(store, port=8765, remote=()):
+    view_hosts=('127.0.0.1','localhost')+tuple(remote)
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args): pass
 
@@ -167,7 +179,7 @@ def build_server(store, port=8765):
 
         def do_GET(self):
             host=self.headers.get('Host','').split(':')[0].lower()
-            if host not in ('127.0.0.1','localhost'):
+            if host not in view_hosts:                 # remote Tailscale names: read-only (do_POST is PC-only)
                 return self.send(b'Invalid host','text/plain',403)
             path=urlsplit(self.path).path
             if path=='/api/replay':
@@ -287,15 +299,19 @@ def build_server(store, port=8765):
     return ThreadingHTTPServer(('127.0.0.1',port),Handler)
 
 
-def start_dashboard(store,port=8765):
-    server=build_server(store,port)
+def start_dashboard(store,port=8765,remote=()):
+    server=build_server(store,port,remote)
     threading.Thread(target=server.serve_forever,daemon=True).start()
     return server
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--port',type=int,default=8765)
-    args=p.parse_args();server=build_server(Store(ROOT/'dashboard.sqlite3'),args.port)
+    p.add_argument('--config',default=str(ROOT/'config.json'))
+    args=p.parse_args()
+    try:cfg=json.loads(Path(args.config).read_text())
+    except (OSError,ValueError):cfg={}
+    server=build_server(Store(ROOT/'dashboard.sqlite3'),args.port,remote_hosts(cfg))
     print(f'Dashboard: http://127.0.0.1:{server.server_port} (keep the bot running separately)',flush=True)
     try: server.serve_forever()
     except KeyboardInterrupt: pass

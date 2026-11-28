@@ -166,6 +166,22 @@ agents trading live**, where **Stop trading live** removes them; the section is 
   already trade live as their strategy.
 - Live Test modules never import the bridge (tested); only the executor sends orders.
 
+## View the dashboard from your phone (Tailscale, view only)
+
+The dashboard still listens on this PC only (`127.0.0.1`). Tailscale gives your own devices a private,
+encrypted link to it; nothing is opened to the internet.
+
+1. Install Tailscale on this PC and on your phone, signed in to the same account.
+2. On this PC: `tailscale serve --bg 8765` (second desk: its own port). It prints
+   `https://<pc>.<tailnet>.ts.net`.
+3. Put that name in `config.json`: `"dashboard_remote_hosts": ["<pc>.<tailnet>.ts.net"]`, then restart
+   the bot (or `dashboard_server.py`).
+4. On the phone (Tailscale on): open `https://<pc>.<tailnet>.ts.net/home`.
+
+Only `*.ts.net` names are accepted. Remote pages are read-only: every button that changes something
+(controls, settings, Trade live, backtests) is refused unless it comes from this PC. Turn it off with
+`tailscale serve --https=443 off`. Never use `tailscale funnel` here: that publishes to the internet.
+
 ## Two desks on one PC (two MT5 accounts)
 
 Each desk is its own project folder with its own MT5 installation, `config.json`, database and port:
