@@ -188,7 +188,7 @@ $('bbma-tp-form').onsubmit=async e=>{
 };
 function structuralTargetNote(plan){
  const tp=plan?.structural_tp;
- if(!tp)return '';
+ if(!tp?.mandatory)return '';   // Live Test agent rows carry only {single_target}
  const mandatory=tp.mandatory,final=tp.final;
  return `<small>Structural · ${esc(tp.timeframe)} · ${tp.single_target?'Full TP':'Mandatory TP'} ${esc(mandatory.source)} @ ${esc(mandatory.price)}${tp.single_target?'':' · Final TP '+esc(final.source)+' @ '+esc(final.price)}</small>`;
 }
