@@ -46,13 +46,35 @@ class Maths(unittest.TestCase):
         rel = sc.reliability([(0.05, 0), (0.07, 1), (0.95, 1), (1.0, 1)])
         self.assertEqual([(b['low'], b['n'], b['actual']) for b in rel], [(0.0, 2, 0.5), (0.9, 2, 1.0)])
 
+    def test_outlier_resistant_stats(self):
+        s = sc.grade_stats([-1.0] * 9 + [45.0])                     # one +45R trade with a spread-sized stop
+        self.assertEqual(s['avg_r'], 3.6)                            # plain average: looks like a great grade
+        self.assertEqual(s['capped_avg_r'], round((-9 + sc.R_CAP) / 10, 3))   # -0.4: still losing
+        self.assertEqual(s['median_r'], -1.0)
+        self.assertEqual(s['outliers'], 1)
+        self.assertEqual(sc.grade_stats([1.0, 2.0])['median_r'], 1.5)
+
     def test_grade_ranking(self):
-        mk = lambda g, n, r: dict(grade=g, closed=n, avg_r=r)
+        mk = lambda g, n, r, plain=None: dict(grade=g, closed=n, capped_avg_r=r, avg_r=r if plain is None else plain, outliers=0)
         self.assertEqual(sc.grade_ranking([mk('A', 30, .2), mk('B', 30, 0), mk('C', 30, -.3), mk('X', 30, -.6)])['status'], 'IN_ORDER')
         out = sc.grade_ranking([mk('A', 30, -.5), mk('B', 30, 0), mk('C', 5, 1), mk('X', 30, -.6)])
         self.assertEqual(out['status'], 'OUT_OF_ORDER')
         self.assertIn('A (-0.50R) is not above B', out['text'])                    # C ignored: too few
         self.assertEqual(sc.grade_ranking([mk('A', 30, .2), mk('B', 3, 0)])['status'], 'TOO_FEW')
+
+    def test_one_outlier_cannot_flip_the_ranking(self):
+        mk = lambda g, capped, plain, n=0: dict(grade=g, closed=30, capped_avg_r=capped, avg_r=plain, outliers=n)
+        out = sc.grade_ranking([mk('A', -.05, -.09), mk('B', -.2, .06, 1), mk('C', -.45, -.45), mk('X', -.7, -.7)])
+        self.assertEqual((out['status'], out['plain_status']), ('IN_ORDER', 'OUT_OF_ORDER'))
+        self.assertIn('capped at ±5R', out['text'])
+        self.assertIn('The plain average disagrees: A (-0.09R) is not above B (+0.06R) (1 trade beyond ±5R)', out['text'])
+
+    def test_outliers_are_listed_and_suggested(self):
+        rows = ([(dict(feed('B', 0.3, 20), symbol='BTCUSD', label='Inverse FVG'), r) for r in (45.0, 31.7, -1.0)]
+                + [(dict(feed('C', 0.3, 20), symbol='XAUUSD', label='Other'), -1.0)])
+        card = sc.scorecards(rows, NOW)['all']
+        self.assertEqual(card['outliers'], [dict(label='Inverse FVG', symbol='BTCUSD', count=2, largest_r=45.0, grades=['B'])])
+        self.assertIn('Inverse FVG · BTCUSD: 2 results beyond ±5R (largest +45.0R)', ' '.join(card['suggestions']))
 
 
 class Scorecard(unittest.TestCase):

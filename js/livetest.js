@@ -217,8 +217,8 @@ const scR = v => v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) 
 const scPct = v => v == null ? '—' : (100 * v).toFixed(0) + '%';
 const scCls = v => v == null ? '' : v >= 0 ? 'buy' : 'sell';
 function scGroupRows(list, nameOf) {
- return (list || []).map(g => `<tr><td>${esc(nameOf(g.name))}</td><td>${g.closed}</td><td>${scPct(g.win_rate)}</td><td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>`
-  + ['A', 'B', 'C', 'X'].map(k => { const s = (g.grades || {})[k]; return s ? `<td class="${scCls(s.avg_r)}">${scR(s.avg_r)}<small class="muted"> ·${s.closed}</small></td>` : '<td class="muted">—</td>'; }).join('') + '</tr>').join('')
+ return (list || []).map(g => `<tr><td>${esc(nameOf(g.name))}</td><td>${g.closed}</td><td>${scPct(g.win_rate)}</td><td class="${scCls(g.capped_avg_r)}" title="plain average ${scR(g.avg_r)}">${scR(g.capped_avg_r)}</td>`
+  + ['A', 'B', 'C', 'X'].map(k => { const s = (g.grades || {})[k]; return s ? `<td class="${scCls(s.capped_avg_r)}" title="plain average ${scR(s.avg_r)}">${scR(s.capped_avg_r)}<small class="muted"> ·${s.closed}</small></td>` : '<td class="muted">—</td>'; }).join('') + '</tr>').join('')
   || '<tr><td colspan="8" class="empty">No closed trades in this period.</td></tr>';
 }
 function renderCalibration() {
@@ -230,8 +230,14 @@ function renderCalibration() {
  $('sc-summary').textContent = `${c.label}: ${c.closed} closed graded trades · ` + (o.status === 'IN_ORDER' ? 'grades in order' : o.status === 'OUT_OF_ORDER' ? 'grades out of order' : 'too few to judge');
  setHTML('sc-verdict', `${chip(o.status === 'IN_ORDER' ? 'IN ORDER' : o.status === 'OUT_OF_ORDER' ? 'OUT OF ORDER' : 'TOO FEW', oCls)} ${esc(o.text || '')}`);
  setHTML('sc-grades', c.by_grade.map(g => `<tr><td>${chip(g.grade + ' · ' + g.name, SA_CLS[g.grade])}</td><td>${g.closed}${g.closed && g.closed < d.min_grade ? ' <small class="muted">(too few)</small>' : ''}</td>`
-  + `<td>${scPct(g.win_rate)}</td><td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>`
-  + `<td class="small">${g.low == null ? '—' : scR(g.low) + ' to ' + scR(g.high)}</td><td class="${scCls(g.net_r)}">${g.closed ? scR(g.net_r) : '—'}</td></tr>`).join(''));
+  + `<td>${scPct(g.win_rate)}</td><td class="${scCls(g.capped_avg_r)}"><b>${scR(g.capped_avg_r)}</b></td><td class="${scCls(g.median_r)}">${scR(g.median_r)}</td>`
+  + `<td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>`
+  + `<td class="small">${g.low == null ? '—' : scR(g.low) + ' to ' + scR(g.high)}</td><td class="${scCls(g.net_r)}">${g.closed ? scR(g.net_r) : '—'}</td>`
+  + `<td>${g.outliers ? chip(g.outliers, 'warn') : '<span class="muted">0</span>'}</td></tr>`).join(''));
+ const outl = c.outliers || [];
+ $('sc-outliers-wrap').hidden = !outl.length;
+ setHTML('sc-outliers', outl.map(x => `<tr><td>${esc(x.label)}</td><td><b>${esc(x.symbol)}</b></td><td>${x.count}</td>`
+  + `<td class="${scCls(x.largest_r)}">${x.largest_r >= 0 ? '+' : ''}${Number(x.largest_r).toFixed(1)}R</td><td>${x.grades.map(k => chip(k, SA_CLS[k])).join(' ')}</td></tr>`).join(''));
  const b = c.brier || {};
  $('sc-brier').textContent = !b.scored ? 'Brier score: no trades with a track record of at least ' + d.min_record + ' trades yet.'
   : `Brier score ${b.brier.toFixed(3)} vs ${b.baseline.toFixed(3)} for always guessing the overall ${scPct(b.base_rate)} win rate (lower is better) · skill ${b.skill == null ? '—' : (b.skill >= 0 ? '+' : '') + b.skill.toFixed(2)}`
@@ -244,7 +250,9 @@ function renderCalibration() {
   || '<tr><td colspan="5" class="empty">No scored trades yet.</td></tr>');
  setHTML('sc-regimes', scGroupRows(c.by_regime, n => SC_REGIME[n] || n));
  setHTML('sc-strategies', scGroupRows(c.by_strategy, n => n));
- const avg = (h, k) => { const g = ((h.all || {}).by_grade || []).find(x => x.grade === k); return g ? `<td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>` : '<td>—</td>'; };
+ // older snapshots (before the capped average existed) fall back to the plain average
+ const avg = (h, k) => { const g = ((h.all || {}).by_grade || []).find(x => x.grade === k); const v = g ? (g.capped_avg_r ?? g.avg_r) : null;
+  return g ? `<td class="${scCls(v)}">${scR(v)}${g.capped_avg_r == null ? '<small class="muted"> plain</small>' : ''}</td>` : '<td>—</td>'; };
  setHTML('sc-history', (d.history || []).slice(0, 30).map(h => { const a = h.all || {}, bs = (a.brier || {}).skill;
   return `<tr><td>${esc(h.day)}</td><td>${a.closed ?? '—'}</td><td>${esc((a.order || '—').replace(/_/g, ' ').toLowerCase())}</td><td>${bs == null ? '—' : (bs >= 0 ? '+' : '') + bs.toFixed(2)}</td>`
    + ['A', 'B', 'C', 'X'].map(k => avg(h, k)).join('') + '</tr>'; }).join('')

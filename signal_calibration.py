@@ -4,8 +4,10 @@ Every Signal Agent row is graded (A/B/C/X) and frozen when the setup appears, to
 agent's record at that moment (backtest and Live Test trades and win rates). Once the simulated
 trade closes, this module scores the grades against what really happened:
 
-  * per grade        closed trades, win rate, average R with a 95 % range, net R
-  * order check      with enough trades, A should beat B, B beat C, and C beat X on average R
+  * per grade        closed trades, win rate, average R with a 95 % range, net R, and two
+                     outlier-resistant views: median R and the average with results capped at +/-5R
+  * order check      with enough trades, A should beat B, B beat C, and C beat X on the capped
+                     average (the plain average is shown too when it disagrees)
   * Brier score      the record's win rate is the predicted chance of a win; Brier is the average
                      squared gap between that chance and the result (1 = win, 0 = loss). Lower is
                      better. It is compared with a baseline that always predicts the overall win
@@ -33,6 +35,7 @@ WINDOWS = (('7d', 'Last 7 days', 7 * 86400), ('30d', 'Last 30 days', 30 * 86400)
 MIN_GRADE = 20          # closed trades a grade needs before it counts in the order check
 MIN_BRIER = 50          # scored trades before the Brier verdict is shown
 MIN_RECORD = 5          # trades an agent's record needs before its win rate counts as a prediction
+R_CAP = 5.0             # outlier-resistant average: each result limited to +/- this many R
 KEEP_DAYS = 120
 MYT = 8 * 3600
 
@@ -53,19 +56,30 @@ def predicted(feed):
     return p / n if n >= MIN_RECORD else None
 
 
+def median(xs):
+    s = sorted(xs)
+    n = len(s)
+    return None if not n else s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
 def grade_stats(rs):
-    """rs: list of R results. Count, win rate, average R with a 95 % range (normal approximation)."""
+    """rs: list of R results. Count, win rate, average R with a 95 % range (normal approximation),
+    plus outlier-resistant views: the median R and the average with every result capped at
+    +/-R_CAP (a trade with a stop the size of the spread can score +40R and swing a whole grade)."""
     n = len(rs)
     if not n:
-        return dict(closed=0, wins=0, win_rate=None, avg_r=None, net_r=0.0, low=None, high=None)
+        return dict(closed=0, wins=0, win_rate=None, avg_r=None, net_r=0.0, low=None, high=None,
+                    median_r=None, capped_avg_r=None, outliers=0)
     avg = sum(rs) / n
     half = None
     if n >= 2:
         sd = math.sqrt(sum((r - avg) ** 2 for r in rs) / (n - 1))
         half = 1.96 * sd / math.sqrt(n)
     wins = sum(r > 0 for r in rs)
+    capped = sum(max(-R_CAP, min(R_CAP, r)) for r in rs) / n
     return dict(closed=n, wins=wins, win_rate=round(wins / n, 4), avg_r=round(avg, 3), net_r=round(sum(rs), 2),
-                low=None if half is None else round(avg - half, 3), high=None if half is None else round(avg + half, 3))
+                low=None if half is None else round(avg - half, 3), high=None if half is None else round(avg + half, 3),
+                median_r=round(median(rs), 3), capped_avg_r=round(capped, 3), outliers=sum(abs(r) > R_CAP for r in rs))
 
 
 def brier(pairs):
@@ -92,19 +106,30 @@ def reliability(pairs, width=0.1):
 
 
 def grade_ranking(by_grade):
-    """Do grades with enough trades line up A > B > C > X on average R?"""
+    """Do grades with enough trades line up A > B > C > X? Judged on the capped average (each
+    result limited to +/-R_CAP) so one outlier trade cannot flip the verdict; the plain average is
+    reported alongside when it disagrees."""
     ready = [g for g in by_grade if g['closed'] >= MIN_GRADE]
     if len(ready) < 2:
-        return dict(status='TOO_FEW', ready=[g['grade'] for g in ready],
+        return dict(status='TOO_FEW', ready=[g['grade'] for g in ready], plain_status=None,
                     text=f'Too few closed trades to judge: each grade needs {MIN_GRADE}.')
-    wrong = [f"{a['grade']} ({a['avg_r']:+.2f}R) is not above {b['grade']} ({b['avg_r']:+.2f}R)"
-             for a, b in zip(ready, ready[1:]) if a['avg_r'] <= b['avg_r']]
+
+    def wrong(key):
+        return [f"{a['grade']} ({a[key]:+.2f}R) is not above {b['grade']} ({b[key]:+.2f}R)"
+                for a, b in zip(ready, ready[1:]) if a[key] <= b[key]]
+    capped, plain = wrong('capped_avg_r'), wrong('avg_r')
     names = ' > '.join(g['grade'] for g in ready)
-    if wrong:
-        return dict(status='OUT_OF_ORDER', ready=[g['grade'] for g in ready],
-                    text='Grades are not separating outcomes: ' + '; '.join(wrong) + '.')
-    return dict(status='IN_ORDER', ready=[g['grade'] for g in ready],
-                text=f'Grades are separating winners from losers ({names} on average R).')
+    cap = f'average R capped at ±{R_CAP:g}R'
+    if capped:
+        text = f'Grades are not separating outcomes ({cap}): ' + '; '.join(capped) + '.'
+    else:
+        text = f'Grades are separating winners from losers ({names} on {cap}).'
+    if bool(plain) != bool(capped):
+        n = sum(g['outliers'] for g in ready)
+        text += (f" The plain average {'disagrees' if plain else 'agrees'}: "
+                 + ('; '.join(plain) if plain else f'{names}') + f' ({n} trade{"s" if n != 1 else ""} beyond ±{R_CAP:g}R).')
+    return dict(status='OUT_OF_ORDER' if capped else 'IN_ORDER', plain_status='OUT_OF_ORDER' if plain else 'IN_ORDER',
+                ready=[g['grade'] for g in ready], text=text)
 
 
 def summarise(rows):
@@ -140,9 +165,30 @@ def split(rows, key, min_closed=1):
     return sorted(out, key=lambda g: -g['closed'])
 
 
+def outlier_list(rows, limit=10):
+    """Results beyond +/-R_CAP, largest first, grouped by agent and pair."""
+    groups = {}
+    for f, r in rows:
+        if abs(r) > R_CAP:
+            k = (f.get('label') or f.get('strategy_id') or '?', f.get('symbol') or '?')
+            groups.setdefault(k, []).append((r, f.get('grade') or '?'))
+    out = [dict(label=k[0], symbol=k[1], count=len(v), largest_r=round(max((r for r, _ in v), key=abs), 2),
+                grades=sorted({g for _, g in v}))
+           for k, v in groups.items()]
+    return sorted(out, key=lambda o: -abs(o['largest_r']))[:limit]
+
+
 def suggestions(card):
     """Plain test ideas from the scorecard. Suggestions only: no rule is ever changed automatically."""
     out = []
+    order = card['order']
+    if order.get('plain_status') and order['plain_status'] != order['status']:
+        out.append('The plain average and the capped average rank the grades differently: a few very large '
+                   'results are moving the plain average (see the outliers below).')
+    for o in card.get('outliers', [])[:3]:
+        out.append(f"{o['label']} · {o['symbol']}: {o['count']} result{'s' if o['count'] != 1 else ''} beyond "
+                   f"±{R_CAP:g}R (largest {o['largest_r']:+.1f}R). TEST IDEA: check its stop size against the spread; "
+                   'a stop the size of the spread turns ordinary moves into huge R.')
     g = {x['grade']: x for x in card['by_grade']}
     if g['A']['closed'] and g['A']['closed'] < MIN_GRADE:
         out.append(f"Only {g['A']['closed']} closed A trades so far: wait for {MIN_GRADE} before trusting the A grade.")
@@ -192,6 +238,7 @@ def scorecards(rows, now):
     for key, label, span in WINDOWS:
         rs = rows if span is None else [(f, r) for f, r in rows if (f.get('entry_time') or 0) >= now - span]
         card = summarise(rs)
+        card['outliers'] = outlier_list(rs)
         card.update(key=key, label=label, suggestions=suggestions(card),
                     by_regime=split(rs, lambda f: (f.get('market') or {}).get('regime')),
                     by_strategy=split(rs, lambda f: f.get('label') or f.get('strategy_id'))[:12])
@@ -200,8 +247,10 @@ def scorecards(rows, now):
 
 
 def _compact(card):
-    return dict(closed=card['closed'], order=card['order']['status'], brier=card['brier'],
-                by_grade=[{k: g[k] for k in ('grade', 'closed', 'win_rate', 'avg_r', 'net_r')} for g in card['by_grade']])
+    return dict(closed=card['closed'], order=card['order']['status'], plain_order=card['order'].get('plain_status'),
+                brier=card['brier'],
+                by_grade=[{k: g[k] for k in ('grade', 'closed', 'win_rate', 'avg_r', 'net_r', 'median_r', 'capped_avg_r')}
+                          for g in card['by_grade']])
 
 
 def snapshot(store, now=None, rows=None):
@@ -247,6 +296,6 @@ def report(store, now=None):
     now = time.time() if now is None else now
     rows = load_rows(store)
     return dict(status='OK', server_epoch=now, simulation=True, windows=scorecards(rows, now),
-                history=history(store), min_grade=MIN_GRADE, min_brier=MIN_BRIER, min_record=MIN_RECORD,
+                history=history(store), min_grade=MIN_GRADE, min_brier=MIN_BRIER, min_record=MIN_RECORD, r_cap=R_CAP,
                 note='Scores the Signal Agent\'s frozen grades against how the SIMULATED Live Test trades closed. '
                      'Report only: grade rules are never changed automatically and nothing is traded.')
