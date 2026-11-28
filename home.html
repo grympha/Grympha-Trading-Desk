@@ -134,16 +134,69 @@ header{position:absolute;left:36px;right:36px;top:26px;height:64px;display:flex;
 #boot .p{width:360px;height:2px;background:rgba(94,224,190,.15)}#boot .p i{display:block;height:100%;width:0;background:var(--teal);box-shadow:0 0 12px var(--teal);transition:width 1.4s ease}
 #boot.done{opacity:0;pointer-events:none}
 .nogl{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:12px var(--mono);letter-spacing:2px;color:var(--muted);text-align:center;z-index:9}
+#scenebox{position:absolute;inset:0}
+
+/* phone held upright (home.js adds .phone): a scrolling page instead of the shrunken 16:9 stage */
+html.phone,html.phone body{height:auto;min-height:100%;overflow-x:hidden;overflow-y:auto}
+html.phone #viewport{position:static;min-height:100vh}
+/* one grid: brand | badge | clock, then scene buttons, 3D box, KPIs, Enter desk, tape, panels, footer */
+#stage.phone{position:relative;width:100%;height:auto;display:grid;grid-template-columns:minmax(0,1fr) auto auto;column-gap:10px;align-items:center;padding-bottom:6px}
+#stage.phone > *{grid-column:1/-1}
+#stage.phone header,#stage.phone .hdr-right{display:contents}
+#stage.phone .brand{grid-row:1;grid-column:1;min-width:0;gap:10px;margin:14px 0 0 14px}
+#stage.phone .brand img{width:34px;height:34px;flex:none}
+#stage.phone .brand div{min-width:0}
+#stage.phone .brand .t1{font-size:21px;letter-spacing:4px}
+#stage.phone .brand .t2{font-size:8.5px;letter-spacing:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#stage.phone .badge{grid-row:1;grid-column:2;margin-top:14px;font-size:11px;padding:6px 9px}
+#stage.phone .clock{grid-row:1;grid-column:3;margin:14px 14px 0 0;font-size:16px;text-align:right}
+#stage.phone .clock small{font-size:8px;letter-spacing:1px}
+#stage.phone .scenes{grid-row:2;position:relative;left:auto;top:auto;transform:none;margin:12px 14px 0}
+#stage.phone .scenes button{flex:1;justify-content:center;min-height:44px;padding:0 4px;font-size:14px;letter-spacing:2px}
+#stage.phone .scenes button kbd{display:none}
+#stage.phone #scenebox{grid-row:3;position:relative;inset:auto;width:100%;margin-top:6px;overflow:hidden}
+#stage.phone .hdr-mid{grid-row:4;grid-column:1/-1;margin:10px 14px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#stage.phone .kpi{min-width:0;padding:8px 12px}
+#stage.phone .kpi small{font-size:10px;letter-spacing:1.5px}
+#stage.phone .kpi b{font-size:18px}
+#stage.phone .enter{grid-row:5;grid-column:1/-1;margin:10px 14px 0;text-align:center;padding:13px 16px;font-size:14px}
+#stage.phone #gl{width:100%;height:100%}
+#stage.phone #rain,#stage.phone #streams,#stage.phone .scan,#stage.phone .grain{display:none}
+#stage.phone .corehalo{width:620px;height:620px;margin:-310px 0 0 -310px}
+#stage.phone .godrays{width:1300px;height:1300px;margin:-650px 0 0 -650px}
+#stage.phone .caption{bottom:12px;width:100%}
+#stage.phone .caption .big{font-size:14px;letter-spacing:6px}
+#stage.phone .caption .sm{font-size:10px;letter-spacing:1.5px}
+#stage.phone .tape{grid-row:6;position:relative;bottom:auto;margin-top:12px}
+#stage.phone .side{position:relative;top:auto;bottom:auto;left:auto;right:auto;width:auto;margin:12px 12px 0;gap:12px}
+#stage.phone .side.right{grid-row:7}#stage.phone .side.left{grid-row:8}
+#stage.phone .card{flex:none!important;height:260px}
+#stage.phone .card:has(#c-candle){height:230px}
+#stage.phone .card:has(#c-tick){height:300px}
+#stage.phone .card:has(#c-dist){height:200px}
+#stage.phone .card:has(#c-heat){height:300px}
+#stage.phone .card:has(#c-lead){height:280px}
+#stage.phone .card:has(#feed){height:370px}
+#stage.phone .card h4{font-size:14px;letter-spacing:2px}
+#stage.phone .feed{font-size:12.5px}
+#stage.phone .foot{grid-row:9;position:relative;left:auto;right:auto;bottom:auto;flex-direction:column;gap:4px;padding:14px;letter-spacing:1px;line-height:1.5}
+#stage.phone .letterbox,#stage.phone #boot{position:fixed}
+#stage.phone.intro .letterbox{height:60px}
+#stage.phone #boot .p{width:220px}
 </style>
 </head>
 <body>
 <div id="viewport">
 <div id="stage" class="intro" data-scene="globe">
-  <canvas id="gl"></canvas>
-  <div class="corehalo"></div><div class="godrays"></div>
-  <canvas id="rain"></canvas>
-  <svg id="streams" viewBox="0 0 1920 1080" aria-hidden="true"></svg>
-  <div id="holo" aria-hidden="true"></div>
+  <div id="scenebox">
+    <canvas id="gl"></canvas>
+    <div class="corehalo"></div><div class="godrays"></div>
+    <canvas id="rain"></canvas>
+    <svg id="streams" viewBox="0 0 1920 1080" aria-hidden="true"></svg>
+    <div id="holo" aria-hidden="true"></div>
+    <div class="caption"><div class="big" id="cap-big">AGENT NETWORK · LIVE</div><div class="sm" id="cap-sm">—</div></div>
+    <div class="haze"></div><div class="vignette"></div>
+  </div>
 
   <header>
     <a class="brand" href="/" aria-label="Open the trading desk"><img src="favicon.svg" alt=""><div><div class="t1">GRYMPHA</div><div class="t2" id="desk-line">TRADING DESK · COMMAND CENTER</div></div></a>
@@ -173,11 +226,10 @@ header{position:absolute;left:36px;right:36px;top:26px;height:64px;display:flex;
     <div class="card" style="flex:1.1"><h4>SIGNAL AGENT FEED <span>GRADE · AGENT</span></h4><div class="feed" id="feed"></div></div>
   </div>
 
-  <div class="caption"><div class="big" id="cap-big">AGENT NETWORK · LIVE</div><div class="sm" id="cap-sm">—</div></div>
   <div class="tape"><div class="tape-inner" id="tape"></div></div>
   <div class="foot"><span id="foot-note"><b>LIVE TEST IS SIMULATED</b> · READ-ONLY PAGE · NOTHING HERE CAN TRADE</span><span id="foot-age">—</span></div>
 
-  <div class="haze"></div><div class="vignette"></div><div class="scan"></div><div class="grain"></div>
+  <div class="scan"></div><div class="grain"></div>
   <div class="letterbox top"></div><div class="letterbox bot"></div>
   <div id="boot"><div class="l">GRYMPHA</div><div id="boot-t">CONNECTING TO THE DESK</div><div class="p"><i id="boot-p"></i></div></div>
 </div>
@@ -185,6 +237,6 @@ header{position:absolute;left:36px;right:36px;top:26px;height:64px;display:flex;
 
 <script src="js/three-r128.js"></script>
 <script src="js/three-bloom.js"></script>
-<script src="js/home.js?v=1.39-today-pnl"></script>
+<script src="js/home.js?v=1.40-phone"></script>
 </body>
 </html>

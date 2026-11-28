@@ -1,7 +1,8 @@
 // Grympha command center (home page). Read-only: it only GETs /api/home and draws it.
 // Three switchable 3D centrepieces (globe, war table, galaxy) share the HUD, panels and camera work.
 'use strict';
-const W = 1920, H = 1080;
+const DW = 1920, DH = 1080;           // desktop design size; on a phone W x H is the 3D box instead
+let W = DW, H = DH, PHONE = false;
 const C = { teal:'#5ee0be', red:'#f28c99', amber:'#e9bc75', blue:'#6c94ce', gold:'#ccae76', goldSoft:'#e2cb98', muted:'#89ada4', text:'#e8f5f2', line:'rgba(94,224,190,.12)' };
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const STILL = /[?&]still/.test(location.search);
@@ -37,7 +38,22 @@ let scale = 1;
 // CSS zoom (not transform: scale) so the browser lays text and cards out at the real screen size and
 // draws them sharp; a scaled transform rasterises at 1920x1080 and then stretches, which looks soft.
 const ZOOM = CSS.supports('zoom', '2');
+// Phone held upright: the 16:9 stage would shrink to ~21% (2-3 px text), so the page becomes a scrolling
+// column instead (CSS #stage.phone) with the 3D scene in its own box. ?phone forces it for testing.
+const sceneBox = $('scenebox');
+const wantPhone = () => /[?&]phone\b/.test(location.search) || (innerWidth < innerHeight && innerWidth <= 820);
+let phoneW = 0, phoneVH = 0;
 function fit(){
+  PHONE = wantPhone();
+  stage.classList.toggle('phone', PHONE); document.documentElement.classList.toggle('phone', PHONE);
+  if (PHONE) {
+    scale = 1; stage.style.zoom = ''; stage.style.left = stage.style.top = stage.style.transform = '';
+    if (innerWidth !== phoneW) { phoneW = innerWidth; phoneVH = innerHeight; }   // ignore the URL bar showing/hiding
+    W = Math.max(1, sceneBox.clientWidth || innerWidth); H = Math.round(Math.min(W * 1.2, phoneVH * .62));
+    sceneBox.style.height = H + 'px';
+    return;
+  }
+  sceneBox.style.height = ''; W = DW; H = DH;
   scale = Math.min(innerWidth / W, innerHeight / H);
   const x = Math.round((innerWidth - W * scale) / 2), y = Math.round((innerHeight - H * scale) / 2);
   if (ZOOM) { stage.style.zoom = scale; stage.style.left = (x / scale) + 'px'; stage.style.top = (y / scale) + 'px'; stage.style.transform = ''; }
@@ -71,9 +87,14 @@ if (HAS3D) {
 }
 function sizeGL(){
   if (!HAS3D) return;
-  const pr = Math.min(3, Math.max(1, devicePixelRatio * scale));      // one 3D pixel per screen pixel
+  const pr = PHONE ? Math.min(2, devicePixelRatio)                     // phone: cap at 2x to spare the GPU
+    : Math.min(3, Math.max(1, devicePixelRatio * scale));              // one 3D pixel per screen pixel
   renderer.setPixelRatio(pr);
   renderer.setSize(W, H, false);
+  // the phone box frames what sits between the desktop side panels (~52% of the width), at its own aspect
+  camera.aspect = W / H;
+  camera.fov = PHONE ? 2 * Math.atan(Math.tan(19 * Math.PI / 180) * (16 / 9) * .52 / camera.aspect) * 180 / Math.PI : 38;
+  camera.updateProjectionMatrix();
   if (composer) { composer.setPixelRatio && composer.setPixelRatio(pr); composer.setSize(W, H); }
 }
 sizeGL();
@@ -130,7 +151,7 @@ function placeCards(){
     c.anchor.getWorldPosition(wp);
     const d = camera.position.distanceTo(wp), [x, y, z] = project(wp);
     if (z > 1) { c.el.style.opacity = '0'; continue; }
-    const sc = Math.max(.5, Math.min(1.15, V.cardScale / d));
+    const sc = Math.max(.5, Math.min(1.15, V.cardScale / d)) * (PHONE ? .6 : 1);
     const blur = Math.min(1.2, Math.max(0, Math.abs(d - focus) * .45 - 1.2));   // light depth of field; nearby cards stay crisp
     const behind = occ && d > occ.d && Math.hypot(x - occ.x, y - occ.y) < occ.r * 1.05;
     c.el.style.transform = `translate(${(x - 98).toFixed(1)}px,${(y - 38).toFixed(1)}px) scale(${sc.toFixed(3)})`;
@@ -511,7 +532,7 @@ function loop(now){
     placeCards();
   }
   flows.forEach((f, i) => f.style.strokeDashoffset = String(-((now / 1000 * 140 * sp + i * 70) % 465)));
-  if (D && frame % 2 === 0) { drawCandles(); drawTickers(); drawDist(t); drawHeat(t); drawLead(t); if (!REDUCED) drawRain(dt * 2); }
+  if (D && frame % 2 === 0) { drawCandles(); drawTickers(); drawDist(t); drawHeat(t); drawLead(t); if (!REDUCED && !PHONE) drawRain(dt * 2); }
   if (frame % 60 === 0 && D) updateAge();
   requestAnimationFrame(loop);
 }
