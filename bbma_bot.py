@@ -433,6 +433,13 @@ def _run(args):
                 signal_agent=SignalAgent(store,alert=signal_alert)  # grades Live Test setups · never trades
             except Exception as exc:
                 logging.warning('Signal Agent unavailable: %s', exc)
+        calibration=None
+        if signal_agent and not args.once:
+            try:
+                from signal_calibration import DailySnapshot
+                calibration=DailySnapshot(store)  # one grade-check snapshot per Malaysia day · report only
+            except Exception as exc:
+                logging.warning('Signal calibration unavailable: %s', exc)
         scout=None
         if store and not args.once:
             try:
@@ -515,6 +522,9 @@ def _run(args):
                 if signal_agent:
                     try:signal_agent.update()
                     except Exception as exc:logging.warning('Signal Agent cycle skipped: %s', exc)
+                if calibration:
+                    try:calibration.step()
+                    except Exception as exc:logging.warning('Signal calibration snapshot skipped: %s', exc)
             if scout:
                 try:
                     report=scout.step()

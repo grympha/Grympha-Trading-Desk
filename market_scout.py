@@ -8,6 +8,8 @@ and Live-Test-only pairs and measures, per symbol:
   * volatility  the last 5 days' daily range against the previous 60 days (quiet / normal / active)
   * trend       EMA 20/50 alignment on H1 and H4 plus how directly price has moved (efficiency
                 ratio); strong when both timeframes agree
+  * regime      one label from closed candles: CRISIS, TRENDING, HIGH_VOL, MEAN_REVERTING or MIXED
+                (see regime(); the Signal Agent stores it with each setup)
   * news        high-impact events in the next 24 h for the symbol's currencies (the bot's own
                 MT5 calendar feed; nothing is fetched from the internet)
 
@@ -107,6 +109,54 @@ def volatility(d1):
     return dict(regime=regime, ratio=ratio)
 
 
+REGIMES = ('CRISIS', 'TRENDING', 'HIGH_VOL', 'MEAN_REVERTING', 'MIXED')
+REGIME_NAMES = dict(CRISIS='Crisis', TRENDING='Trending', HIGH_VOL='High volatility',
+                    MEAN_REVERTING='Mean reverting', MIXED='Mixed')
+CRISIS_RATIO, HIGH_VOL_RATIO = 2.0, 1.4      # last 5 daily ranges vs the 60 before (same as EXTREME / ACTIVE)
+SHOCK_ATR, SHOCK_BARS = 3.0, 3               # an H1 candle >= 3x ATR in the last 3 closed hours
+RANGE_EFFICIENCY = 0.15                      # price going nowhere: efficiency ratio below this
+
+
+def shock(h1, bars=SHOCK_BARS, n=14):
+    """Largest true range of the last `bars` H1 candles, in multiples of the ATR just before them.
+    Expects closed candles only (the caller drops the forming one)."""
+    if len(h1) < n + bars + 1:
+        return None
+    base = atr(h1[:-bars], n)
+    if not base:
+        return None
+    return round(max(_tr(h1[-(bars + 1):])) / base, 2)
+
+
+def regime(h1, h4, d1):
+    """One market regime label from CLOSED candles only, first match wins:
+      CRISIS          daily range >= 2x normal, or an H1 candle >= 3x ATR in the last 3 hours
+      TRENDING        H1 and H4 agree and price moves efficiently (Market Scout's STRONG trend)
+      HIGH_VOL        daily range >= 1.4x normal without a clean trend
+      MEAN_REVERTING  price going nowhere (efficiency < 0.15) in normal or quiet volatility
+      MIXED           anything else: no clear picture
+    The last bar of each list is treated as still forming and ignored, so the label at a moment
+    never depends on a candle that had not closed yet (safe to use in backtests)."""
+    h1c, h4c = h1[:-1], h4[:-1]
+    if len(h1c) < 60 or len(h4c) < 60:
+        return dict(label='MIXED', reason='not enough history', ratio=None, shock_x=None, efficiency=None)
+    tr, vol, sx = trend(h1c, h4c), volatility(d1), shock(h1c)
+    ratio, er = vol.get('ratio'), tr['efficiency']
+    if (ratio is not None and ratio >= CRISIS_RATIO) or (sx is not None and sx >= SHOCK_ATR):
+        label = 'CRISIS'
+        why = (f'daily range {ratio:.1f}x normal' if ratio is not None and ratio >= CRISIS_RATIO
+               else f'H1 candle {sx:.1f}x ATR in the last {SHOCK_BARS} hours')
+    elif tr['label'].startswith('STRONG'):
+        label, why = 'TRENDING', f"H1 and H4 trend {'up' if tr['h1'] > 0 else 'down'}, efficiency {er:.2f}"
+    elif ratio is not None and ratio >= HIGH_VOL_RATIO:
+        label, why = 'HIGH_VOL', f'daily range {ratio:.1f}x normal, no clean trend'
+    elif er < RANGE_EFFICIENCY:
+        label, why = 'MEAN_REVERTING', f'price going nowhere, efficiency {er:.2f}'
+    else:
+        label, why = 'MIXED', 'no clear trend or range'
+    return dict(label=label, reason=why, ratio=ratio, shock_x=sx, efficiency=er)
+
+
 def score(cost_pct, tr, vol):
     """0-100 'worth watching': cheap to trade (45 %), trending cleanly (35 %), normal-to-active (20 %)."""
     cost_s = 0.0 if cost_pct is None else min(1.0, max(0.0, (0.25 - cost_pct) / 0.20))
@@ -155,7 +205,7 @@ def analyse(symbol, role, h1, h4, d1, point, spread_now_points=None, currencies=
                 typical_spread=None if typical is None else typical * point,
                 typical_spread_by_hour=by_hour,
                 spread_now_points=spread_now_points, spread_x=spread_x, cost_pct=cost_pct,
-                volatility=vol, trend=tr, currencies=cur, news=news[:5],
+                volatility=vol, trend=tr, regime=regime(h1, h4, d1), currencies=cur, news=news[:5],
                 score=score(cost_pct, tr, vol))
 
 
@@ -173,6 +223,11 @@ def recommendations(rows, now=None):
         when = f'in {m} min' if m < 120 else f'in {m / 60:.1f} h'
         out.append(dict(kind='NEWS', symbol=','.join(syms),
                         text=f'{cur} high-impact news {when}: {title}. Affects {", ".join(syms)}.'))
+    for r in watched:
+        reg = r.get('regime') or {}
+        if reg.get('label') == 'CRISIS':
+            out.append(dict(kind='REGIME', symbol=r['symbol'],
+                            text=f"{r['symbol']} is in a crisis regime: {reg.get('reason')}. Expect gaps and wide spreads."))
     for r in watched:
         if r['spread_x'] and r['spread_x'] >= WIDE_SPREAD_X:
             out.append(dict(kind='COST', symbol=r['symbol'],
@@ -353,7 +408,7 @@ def main(argv=None):
         cost = '—' if x['cost_pct'] is None else f"{x['cost_pct'] * 100:5.1f}%"
         print(f"{x['symbol']:12s} {x['role']:10s} score {x['score']:3d}  cost {cost}  "
               f"spread×{x['spread_x'] if x['spread_x'] is not None else '—':<5}  vol {x['volatility']['regime']:8s}  "
-              f"trend {x['trend']['label']:12s} news {len(x['news'])}")
+              f"trend {x['trend']['label']:12s} regime {(x.get('regime') or {}).get('label', '—'):14s} news {len(x['news'])}")
     print('\nRecommendations:')
     for rec in r['recommendations']:
         print(f"  [{rec['kind']}] {rec['text']}")

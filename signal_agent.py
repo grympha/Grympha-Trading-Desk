@@ -63,6 +63,7 @@ def market_context(scout_row, pos):
     x = round(spread / usual, 2) if usual and spread else None
     return dict(spread_x=x, wide_spread=bool(x and x >= market_scout.WIDE_SPREAD_X),
                 volatility=scout_row['volatility']['regime'], trend=scout_row['trend']['label'],
+                regime=(scout_row.get('regime') or {}).get('label'),
                 cost_pct=scout_row.get('cost_pct'), scout_epoch=scout_row.get('_epoch'))
 
 
@@ -150,6 +151,8 @@ class SignalAgent:
                 back, fwd = backtests.get(aid), self._forward(db, aid, p['entry_time'])
                 g, reason = grade(back, fwd)
                 market = market_context(scout.get(p.get('symbol')), p)
+                if market and market.get('regime'):
+                    reason += f" · Regime {market_scout.REGIME_NAMES.get(market['regime'], market['regime']).lower()} (Market Scout)"
                 if market and market['wide_spread']:
                     reason += f" · Spread at entry {market['spread_x']:.1f}× usual (Market Scout)"
                     if g == 'A':

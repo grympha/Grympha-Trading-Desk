@@ -199,7 +199,58 @@ async function refreshSignalAgent() {
   if (!res.ok) throw Error('HTTP ' + res.status);
   signalData = await res.json(); renderSignalAgent();
  } catch (e) { signalData = { error: e.message, feed: [], by_grade: [] }; renderSignalAgent(); }
+ refreshCalibration();
 }
+
+// ---- Grade check: do the frozen grades predict how the simulated trades closed? (report only) ----
+let calData = null;
+async function refreshCalibration() {
+ try {
+  if (demo) { calData = { windows: {}, history: [] }; renderCalibration(); return; }
+  const res = await fetch('api/signal-calibration', { cache: 'no-store' });
+  if (!res.ok) throw Error(res.status === 404 ? 'restart the dashboard (v1.44 backend)' : 'HTTP ' + res.status);
+  calData = await res.json(); renderCalibration();
+ } catch (e) { calData = { error: e.message, windows: {}, history: [] }; renderCalibration(); }
+}
+const SC_REGIME = { CRISIS: 'Crisis', TRENDING: 'Trending', HIGH_VOL: 'High volatility', MEAN_REVERTING: 'Mean reverting', MIXED: 'Mixed', UNKNOWN: 'Not recorded (before regime labels)' };
+const scR = v => v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + 'R';
+const scPct = v => v == null ? '—' : (100 * v).toFixed(0) + '%';
+const scCls = v => v == null ? '' : v >= 0 ? 'buy' : 'sell';
+function scGroupRows(list, nameOf) {
+ return (list || []).map(g => `<tr><td>${esc(nameOf(g.name))}</td><td>${g.closed}</td><td>${scPct(g.win_rate)}</td><td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>`
+  + ['A', 'B', 'C', 'X'].map(k => { const s = (g.grades || {})[k]; return s ? `<td class="${scCls(s.avg_r)}">${scR(s.avg_r)}<small class="muted"> ·${s.closed}</small></td>` : '<td class="muted">—</td>'; }).join('') + '</tr>').join('')
+  || '<tr><td colspan="8" class="empty">No closed trades in this period.</td></tr>';
+}
+function renderCalibration() {
+ const d = calData; if (!d || !$('sc-grades')) return;
+ if (d.error) { $('sc-summary').textContent = 'Grade check unavailable: ' + d.error; return; }
+ const c = (d.windows || {})[$('sc-window').value];
+ if (!c) { $('sc-summary').textContent = demo ? 'Sample view: no graded trades.' : 'No graded trades yet.'; setHTML('sc-grades', '<tr><td colspan="6" class="empty">No graded trades yet.</td></tr>'); return; }
+ const o = c.order || {}, oCls = o.status === 'IN_ORDER' ? 'good' : o.status === 'OUT_OF_ORDER' ? 'bad' : 'warn';
+ $('sc-summary').textContent = `${c.label}: ${c.closed} closed graded trades · ` + (o.status === 'IN_ORDER' ? 'grades in order' : o.status === 'OUT_OF_ORDER' ? 'grades out of order' : 'too few to judge');
+ setHTML('sc-verdict', `${chip(o.status === 'IN_ORDER' ? 'IN ORDER' : o.status === 'OUT_OF_ORDER' ? 'OUT OF ORDER' : 'TOO FEW', oCls)} ${esc(o.text || '')}`);
+ setHTML('sc-grades', c.by_grade.map(g => `<tr><td>${chip(g.grade + ' · ' + g.name, SA_CLS[g.grade])}</td><td>${g.closed}${g.closed && g.closed < d.min_grade ? ' <small class="muted">(too few)</small>' : ''}</td>`
+  + `<td>${scPct(g.win_rate)}</td><td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>`
+  + `<td class="small">${g.low == null ? '—' : scR(g.low) + ' to ' + scR(g.high)}</td><td class="${scCls(g.net_r)}">${g.closed ? scR(g.net_r) : '—'}</td></tr>`).join(''));
+ const b = c.brier || {};
+ $('sc-brier').textContent = !b.scored ? 'Brier score: no trades with a track record of at least ' + d.min_record + ' trades yet.'
+  : `Brier score ${b.brier.toFixed(3)} vs ${b.baseline.toFixed(3)} for always guessing the overall ${scPct(b.base_rate)} win rate (lower is better) · skill ${b.skill == null ? '—' : (b.skill >= 0 ? '+' : '') + b.skill.toFixed(2)}`
+    + (b.scored < d.min_brier ? ` · only ${b.scored} scored trades, too few to judge.` : b.skill > 0 ? ' · the records add information.' : ' · the records predict no better than the average.')
+    + ` Scored ${b.scored} trades whose agent had at least ${d.min_record} trades of record.`;
+ setHTML('sc-suggest', (c.suggestions || []).map(s => `<p class="small">${chip('TEST IDEA', 'warn')} ${esc(s)}</p>`).join(''));
+ setHTML('sc-reliability', (c.reliability || []).map(x => { const gap = x.actual - x.predicted;
+  return `<tr><td>${(100 * x.low).toFixed(0)}–${(100 * x.high).toFixed(0)}%</td><td>${x.n}</td><td>${scPct(x.predicted)}</td><td>${scPct(x.actual)}</td>`
+   + `<td class="${x.n >= 30 && Math.abs(gap) >= 0.15 ? 'sell' : ''}">${gap >= 0 ? '+' : ''}${(100 * gap).toFixed(0)} pts</td></tr>`; }).join('')
+  || '<tr><td colspan="5" class="empty">No scored trades yet.</td></tr>');
+ setHTML('sc-regimes', scGroupRows(c.by_regime, n => SC_REGIME[n] || n));
+ setHTML('sc-strategies', scGroupRows(c.by_strategy, n => n));
+ const avg = (h, k) => { const g = ((h.all || {}).by_grade || []).find(x => x.grade === k); return g ? `<td class="${scCls(g.avg_r)}">${scR(g.avg_r)}</td>` : '<td>—</td>'; };
+ setHTML('sc-history', (d.history || []).slice(0, 30).map(h => { const a = h.all || {}, bs = (a.brier || {}).skill;
+  return `<tr><td>${esc(h.day)}</td><td>${a.closed ?? '—'}</td><td>${esc((a.order || '—').replace(/_/g, ' ').toLowerCase())}</td><td>${bs == null ? '—' : (bs >= 0 ? '+' : '') + bs.toFixed(2)}</td>`
+   + ['A', 'B', 'C', 'X'].map(k => avg(h, k)).join('') + '</tr>'; }).join('')
+  || '<tr><td colspan="8" class="empty">The first snapshot is saved by the bot today; one more each Malaysia day.</td></tr>');
+}
+$('sc-window').addEventListener('change', renderCalibration);
 const SA_CLS = { A: 'good', B: 'warn', C: '', X: 'bad' };
 // enough decimals for any instrument: FX 5, JPY / silver 3, gold / indices / crypto 2
 const saPx = v => v == null ? '—' : fmt(v, Math.abs(v) < 20 ? 5 : Math.abs(v) < 1000 ? 3 : 2);

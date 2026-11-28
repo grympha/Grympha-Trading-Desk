@@ -14,7 +14,8 @@ async function refreshScout() {
 const MS_ROLE = { LIVE: 'Live', LIVE_TEST: 'Live Test', CANDIDATE: 'Candidate' };
 const MS_ORDER = { LIVE: 0, LIVE_TEST: 1, CANDIDATE: 2 };
 const MS_FILTER = { MINE: 'My pairs', LIVE: 'Live pairs', LIVE_TEST: 'Live-Test-only pairs', CANDIDATE: 'Candidates', ALL: 'All markets' };
-const MS_KIND ={ NEWS: 'warn', COST: 'bad', VOLATILITY: 'warn', TREND: 'good', ADD: 'good' };
+const MS_KIND ={ NEWS: 'warn', REGIME: 'bad', COST: 'bad', VOLATILITY: 'warn', TREND: 'good', ADD: 'good' };
+const MS_REGIME = { CRISIS: ['Crisis', 'bad'], TRENDING: ['Trending', 'good'], HIGH_VOL: ['High vol', 'warn'], MEAN_REVERTING: ['Mean reverting', ''], MIXED: ['Mixed', ''] };
 function msPct(v) { return v == null ? '—' : (v * 100).toFixed(v < 0.1 ? 1 : 0) + '%'; }
 function msWhen(m) { return m < 120 ? 'in ' + m + ' min' : 'in ' + (m / 60).toFixed(1) + ' h'; }
 function renderScout() {
@@ -43,8 +44,9 @@ function renderScout() {
    + `<td class="${costCls}">${msPct(cost)}</td><td class="${sxCls}">${sx == null ? '<span class="muted">closed</span>' : sx.toFixed(1) + '×'}</td>`
    + `<td>${chip(v.regime || '—', vCls)}<small class="muted"> ${v.ratio == null ? '' : v.ratio.toFixed(1) + '×'}</small></td>`
    + `<td>${chip(t.label || '—', tCls)}</td>`
+   + `<td title="${esc((x.regime || {}).reason || '')}">${x.regime ? chip((MS_REGIME[x.regime.label] || [x.regime.label])[0], (MS_REGIME[x.regime.label] || [])[1] || '') : '<span class="muted">next sweep</span>'}</td>`
    + `<td class="small">${n ? esc(`${n.currency} · ${n.title} · ${msWhen(n.minutes)}`) : '<span class="muted">none in 24 h</span>'}</td></tr>`;
- }, { pageSize: 20, colspan: 8, empty: 'No markets match this filter.' });
+ }, { pageSize: 20, colspan: 9, empty: 'No markets match this filter.' });
  $('ms-skipped').textContent = (r.skipped || []).length ? 'Skipped: ' + r.skipped.map(s => `${s.symbol} (${s.reason})`).join(', ') : '';
 }
 $('ms-filter-role').addEventListener('change', renderScout);

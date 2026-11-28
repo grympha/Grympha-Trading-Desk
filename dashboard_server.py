@@ -219,6 +219,9 @@ def build_server(store, port=8765, remote=()):
             if path=='/api/signal-agent':
                 from signal_agent import report as signal_report
                 return self.send(json.dumps(signal_report(store),allow_nan=False).encode(),'application/json')
+            if path=='/api/signal-calibration':
+                from signal_calibration import report as calibration_report
+                return self.send(json.dumps(calibration_report(store),allow_nan=False).encode(),'application/json')
             if path=='/api/live-test.csv':
                 from live_test import LiveTestEngine
                 agent=parse_qs(urlsplit(self.path).query).get('agent',[None])[0]

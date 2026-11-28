@@ -100,13 +100,16 @@ class Feed(unittest.TestCase):
                                                               for i, r in enumerate([1, -0.5] * 20)]))])
         market_scout.save(self.store, dict(generated_epoch=NOW - 600, rows=[dict(
             symbol='XAUUSD', point=0.01, typical_spread_points=20, typical_spread_by_hour={},
-            volatility=dict(regime='ACTIVE'), trend=dict(label='MIXED'), cost_pct=0.01)]))
+            volatility=dict(regime='ACTIVE'), trend=dict(label='MIXED'), cost_pct=0.01,
+            regime=dict(label='HIGH_VOL', reason='daily range 1.6x normal, no clean trend'))]))
         self.agent.update(now=NOW - 60)
         self.open_position(self.pos('wide', NOW - 30, entry_spread=0.8))      # 4x the usual 0.20
         [row] = self.agent.update(now=NOW)
         self.assertEqual(row['grade'], 'B')
         self.assertIn('downgraded from A', row['reason'])
         self.assertEqual(row['market']['spread_x'], 4.0)
+        self.assertEqual(row['market']['regime'], 'HIGH_VOL')
+        self.assertIn('Regime high volatility (Market Scout)', row['reason'])
         self.assertEqual(self.alerts, [])
 
     def test_grade_is_frozen_and_outcome_follows_the_trade(self):
