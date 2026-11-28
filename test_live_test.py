@@ -102,7 +102,7 @@ class ReadOnlyGuard(unittest.TestCase):
                      'live_test_ifvg.py', 'live_test_momentum.py', 'live_test_advocate.py',
                      'live_test_amd.py', 'live_test_bbma.py', 'live_test_confluence.py',
                      'live_test_live_orb.py', 'quant_agent.py', 'signal_agent.py', 'market_scout.py',
-                     'quant_runner.py', 'home_view.py', 'live_test_trailflip.py', 'signal_calibration.py'):
+                     'quant_runner.py', 'home_view.py', 'live_test_trailflip.py', 'signal_calibration.py', 'live_test_snr.py', 'live_test_elliott.py'):
             code = self._code_only(name)
             for tok in self.FORBIDDEN:
                 self.assertNotIn(tok, code, f'{name} code must not reference {tok!r} (read-only Live Test)')
@@ -577,13 +577,19 @@ class CmsRegistration(unittest.TestCase):
                     not in ('ORB_BREAKOUT_RETEST', 'H4_LIQ_SWEEP_FVG', 'CRT_H1_M5',
                             'H4_SWING_SWEEP_FVG_ENGULF', 'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST',
                             'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3',
-                            'LIVE_BBMA', 'LIVE_CONFLUENCE', 'LIVE_ORB', 'TRAILFLIP')}
+                            'LIVE_BBMA', 'LIVE_CONFLUENCE', 'LIVE_ORB', 'TRAILFLIP', 'SNR_ZONES', 'EW_IMPULSE')}
             self.assertEqual(len(core), 6)
             per_pair = {la.agent.strategy_id for la in eng.agents.values()
                         if la.base_symbol == base}
             for sid in ('H4_LIQ_SWEEP_FVG', 'CRT_H1_M5', 'H4_SWING_SWEEP_FVG_ENGULF',
-                        'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST'):
+                        'NY_SWEEP_LONDON', 'INVERSE_FVG_RETEST', 'SNR_ZONES', 'EW_IMPULSE'):
                 self.assertIn(sid, per_pair)
+            snr = [la for la in eng.agents.values() if la.base_symbol == base and la.agent.strategy_id == 'SNR_ZONES']
+            self.assertEqual(len(snr), 4)                                     # Bounce / Retest x regime filter
+            self.assertTrue(all(la.status == 'PAUSED' for la in snr))
+            ew = [la for la in eng.agents.values() if la.base_symbol == base and la.agent.strategy_id == 'EW_IMPULSE']
+            self.assertEqual(len(ew), 2)                                      # wave 3 and wave 5
+            self.assertTrue(all(la.status == 'PAUSED' for la in ew))
         # ORB, the two ported gold desks and the AMD Power-of-Three models are XAUUSD-only
         for sid in ('ORB_BREAKOUT_RETEST', 'MOMENTUM_M5_M1', 'ADVOCATE_EMA_PULLBACK', 'AMD_PO3'):
             bases = {la.base_symbol for la in eng.agents.values()

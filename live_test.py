@@ -1312,6 +1312,18 @@ def build_agent(strategy_id, config):
             return InverseFvgRetest(config)
         except Exception:
             return None
+    if strategy_id == 'SNR_ZONES':
+        try:
+            from live_test_snr import SnrZones
+            return SnrZones(config)
+        except Exception:
+            return None
+    if strategy_id == 'EW_IMPULSE':
+        try:
+            from live_test_elliott import ElliottImpulse
+            return ElliottImpulse(config)
+        except Exception:
+            return None
     if strategy_id == 'MOMENTUM_M5_M1':
         try:
             from live_test_momentum import MomentumM5M1
@@ -1392,6 +1404,26 @@ def h4_liq_timeframes(cfg):
     return out or ['M5']
 
 
+def snr_agent_configs(cfg, base):
+    """S&R Zones configs for one pair: `snr.modes` (default BOUNCE and RETEST; FAKEOUT optional) x
+    regime filter off/on (`snr.regime_filter_variants`, default both), plus `snr.symbol_overrides`."""
+    s = (cfg or {}).get('snr') or {}
+    modes = [m for m in (s.get('modes') or ['BOUNCE', 'RETEST']) if m in ('BOUNCE', 'RETEST', 'FAKEOUT')]
+    filters = s.get('regime_filter_variants') or [False, True]
+    ov = (s.get('symbol_overrides') or {}).get(base) or {}
+    return [{'mode': m, 'regime_filter': bool(f), **ov} for m in modes for f in filters]
+
+
+def elliott_agent_configs(cfg, base):
+    """Elliott Wave configs for one pair: `elliott.modes` (default WAVE3 and WAVE5) x
+    `elliott.regime_filter_variants` (default off only), plus `elliott.symbol_overrides`."""
+    s = (cfg or {}).get('elliott') or {}
+    modes = [m for m in (s.get('modes') or ['WAVE3', 'WAVE5']) if m in ('WAVE3', 'WAVE5')]
+    filters = s.get('regime_filter_variants') or [False]
+    ov = (s.get('symbol_overrides') or {}).get(base) or {}
+    return [{'mode': m, 'regime_filter': bool(f), **ov} for m in modes for f in filters]
+
+
 def ensure_default_agents(engine, cfg=None):
     """Register the starting agents (paused) if not already present. The core agents run on
     every configured pair. The H4 Liquidity Sweep + FVG agent runs on every pair too, at the
@@ -1420,6 +1452,12 @@ def ensure_default_agents(engine, cfg=None):
         for sid in ALL_SYMBOL_AGENTS:
             ov = (cfg.get(_key[sid]) or {}).get('symbol_overrides') or {}
             _reg(build_agent(sid, ov.get(base) or {}), base)
+        # S&R Zones: one agent per mode, each with and without the regime filter (side-by-side test).
+        for snr in snr_agent_configs(cfg, base):
+            _reg(build_agent('SNR_ZONES', snr), base)
+        # Elliott Wave impulse entries: wave 3 and wave 5 (regime filter variants optional).
+        for ew in elliott_agent_configs(cfg, base):
+            _reg(build_agent('EW_IMPULSE', ew), base)
     # Gold ORB 09:30 NY is XAUUSD-only (SELL baseline).
     _reg(build_agent('ORB_BREAKOUT_RETEST', cfg.get('orb') or {}), 'XAUUSD')
     # Ported XAUUSD paper desks (gold-tuned ATR/sizing), XAUUSD-only like ORB.

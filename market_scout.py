@@ -128,7 +128,7 @@ def shock(h1, bars=SHOCK_BARS, n=14):
     return round(max(_tr(h1[-(bars + 1):])) / base, 2)
 
 
-def regime(h1, h4, d1):
+def regime(h1, h4, d1, closed=False):
     """One market regime label from CLOSED candles only, first match wins:
       CRISIS          daily range >= 2x normal, or an H1 candle >= 3x ATR in the last 3 hours
       TRENDING        H1 and H4 agree and price moves efficiently (Market Scout's STRONG trend)
@@ -136,8 +136,10 @@ def regime(h1, h4, d1):
       MEAN_REVERTING  price going nowhere (efficiency < 0.15) in normal or quiet volatility
       MIXED           anything else: no clear picture
     The last bar of each list is treated as still forming and ignored, so the label at a moment
-    never depends on a candle that had not closed yet (safe to use in backtests)."""
-    h1c, h4c = h1[:-1], h4[:-1]
+    never depends on a candle that had not closed yet (safe to use in backtests). Pass
+    closed=True when h1/h4 already hold closed candles only (Live Test / Quant market adapters);
+    d1's last bar is always treated as the forming day."""
+    h1c, h4c = (h1, h4) if closed else (h1[:-1], h4[:-1])
     if len(h1c) < 60 or len(h4c) < 60:
         return dict(label='MIXED', reason='not enough history', ratio=None, shock_x=None, efficiency=None)
     tr, vol, sx = trend(h1c, h4c), volatility(d1), shock(h1c)
